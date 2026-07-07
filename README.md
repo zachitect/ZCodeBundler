@@ -1,3 +1,5 @@
+<img width="986" height="793" alt="image" src="https://github.com/user-attachments/assets/ba10ff9f-ae58-47cb-b727-bfdc165072e1" />
+
 # ZCodeBundler
 
 **ZCodeBundler** is a simple Windows app for creating a single text bundle from selected files in a codebase.
