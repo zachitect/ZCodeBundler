@@ -1,6 +1,6 @@
 ﻿using System.IO;
 
-namespace ZCodeBundler;
+namespace ZCodeBundler.Bundling;
 
 public sealed class FileTreeScanner
 {
@@ -355,6 +355,9 @@ public sealed class FileTreeScanner
             return null;
 
         var fileType = GetFileType(file);
+        var fullPath = file.Directory == null
+            ? file.FullName
+            : Path.Combine(file.Directory.FullName, file.Name);
         var parentFolderName = file.Directory?.Name ?? string.Empty;
 
         var relativePath = string.IsNullOrWhiteSpace(parentFolderName)
@@ -363,7 +366,7 @@ public sealed class FileTreeScanner
 
         return new FileTreeNode(
             file.Name,
-            file.FullName,
+            fullPath,
             relativePath,
             isFile: true,
             fileType,
@@ -381,10 +384,12 @@ public sealed class FileTreeScanner
             if (SkippedFolderNames.Contains(childDirectory.Name))
                 continue;
 
+            var childFullPath = Path.Combine(directory.FullName, childDirectory.Name);
+
             children.Add(new FileTreeNode(
                 childDirectory.Name,
-                childDirectory.FullName,
-                GetRelativePath(rootFolderPath, childDirectory.FullName),
+                childFullPath,
+                GetRelativePath(rootFolderPath, childFullPath),
                 isFile: false,
                 fileType: string.Empty,
                 isKnownFileType: true,
@@ -402,11 +407,12 @@ public sealed class FileTreeScanner
 
             var fileType = GetFileType(file);
             var isKnownFileType = fileType != "unknown";
+            var fullPath = Path.Combine(directory.FullName, file.Name);
 
             children.Add(new FileTreeNode(
                 file.Name,
-                file.FullName,
-                GetRelativePath(rootFolderPath, file.FullName),
+                fullPath,
+                GetRelativePath(rootFolderPath, fullPath),
                 isFile: true,
                 fileType,
                 isKnownFileType,

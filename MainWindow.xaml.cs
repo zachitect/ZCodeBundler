@@ -1,10 +1,13 @@
 ﻿using DataGridPreview.Core.APIReferences;
 using Microsoft.Win32;
 using System.IO;
+using System.Security;
 using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using ZCodeBundler.Bundling;
+using ZCodeBundler.Decoding;
 using static DataGridPreview.Core.APIReferences.APIOfDialogs;
 
 namespace ZCodeBundler
@@ -12,7 +15,11 @@ namespace ZCodeBundler
     public partial class MainWindow : Window
     {
         private readonly List<FileTreeNode> _selectedFiles = new();
+        private readonly List<DecodedBundleListItem> _decodedFiles = new();
+        private readonly Dictionary<string, DecodedBundleViewerWindow> _openDecodedViewers = new(StringComparer.OrdinalIgnoreCase);
         private readonly DispatcherTimer _statusMessageTimer;
+        private readonly ZCodeBundleReader _bundleReader = new();
+        private bool _isDecodedPanelExpanded;
 
         public MainWindow()
         {
@@ -27,6 +34,30 @@ namespace ZCodeBundler
             RefreshSelectedFilesList();
             UpdateFileActionButtons();
             UpdateTotalFilesStatus();
+            ShowDecodedBundleFiles(new List<DecodedBundleListItem>());
+            SetDecodedPanelExpanded(false);
+        }
+
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            if (_openDecodedViewers.Count > 0)
+            {
+                var confirmed = new APIOfDialogs.DialogMsgBoxAC(
+                    "Close ZCodeBundler",
+                    "Closing ZCodeBundler will close all decoded viewer windows. Continue?",
+                    "Yes",
+                    MessageBoxImage.Warning).ShowDialog();
+
+                if (confirmed != true)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                CloseAllDecodedViewers();
+            }
+
+            base.OnClosing(e);
         }
 
         private void SelectRootFolderButton_Click(object sender, RoutedEventArgs e)
@@ -51,10 +82,7 @@ namespace ZCodeBundler
             if (_selectedFiles.Count == 0)
                 return;
 
-            var downloadsFolder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Downloads");
-
+            var downloadsFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
             var commonRootPath = GetCommonRootDirectory(_selectedFiles);
             var bundleNamePrefix = GetBundleNamePrefix(commonRootPath);
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss");
@@ -64,9 +92,7 @@ namespace ZCodeBundler
             {
                 Title = "Save ZCodeBundle",
                 FileName = defaultFileName,
-                InitialDirectory = Directory.Exists(downloadsFolder)
-                    ? downloadsFolder
-                    : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                InitialDirectory = Directory.Exists(downloadsFolder) ? downloadsFolder : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
                 DefaultExt = ".txt",
                 Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*"
             };
@@ -79,7 +105,6 @@ namespace ZCodeBundler
                 var rootPath = commonRootPath ?? "Multiple roots / direct files";
                 var writer = new BundleWriter();
                 var result = writer.Write(rootPath, _selectedFiles, dialog.FileName);
-
                 var message = $"Bundle created:\n{result.OutputPath}\n\nFiles written: {result.WrittenFileCount}";
 
                 if (result.Warnings.Count > 0)
@@ -140,7 +165,6 @@ namespace ZCodeBundler
                 return;
 
             var removedCount = _selectedFiles.Count;
-
             _selectedFiles.Clear();
 
             RefreshSelectedFilesList();
@@ -152,6 +176,311 @@ namespace ZCodeBundler
         private void SelectedFilesListView_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             UpdateFileActionButtons();
+        }
+
+        private void ToggleDecodedPanelButton_Click(object sender, RoutedEventArgs e)
+        {
+            SetDecodedPanelExpanded(!_isDecodedPanelExpanded);
+        }
+
+        private void AddZcbTxtButton_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                Title = "Add ZCodeBundle file",
+                Multiselect = true,
+                DefaultExt = ".txt",
+                Filter = "ZCodeBundle files (*.zcb.txt)|*.zcb.txt|Text files (*.txt)|*.txt|All files (*.*)|*.*"
+            };
+
+            if (dialog.ShowDialog(this) != true)
+                return;
+
+            TryDecodeDroppedBundleFiles(dialog.FileNames);
+        }
+
+        private void ClearDecodedBundleButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAllDecodedViewers();
+            ShowDecodedBundleFiles(new List<DecodedBundleListItem>());
+            ShowTemporaryStatus("Cleared decoded files.");
+        }
+
+        private void ApplyAllDecodedChangesButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_decodedFiles.Count == 0)
+                return;
+
+            RefreshDecodedFileStatuses(_decodedFiles);
+
+            if (_decodedFiles.Any(file => file.Status == DecodedSourceStatus.DuplicateTarget))
+            {
+                RefreshDecodedBundleFilesList();
+                UpdateDecodedPanelButtons();
+                RefreshAllOpenDecodedViewers();
+                ShowDuplicateTargetWarning();
+                return;
+            }
+
+            ApplyDecodedFiles(_decodedFiles, "There are no decoded files with changes to apply.", "Apply decoded changes to all files?");
+        }
+
+        private void ApplySelectedDecodedChangesButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (DecodedBundleFilesListView.SelectedItems.Count == 0)
+                return;
+
+            var selectedItems = GetSelectedDecodedFiles();
+
+            if (selectedItems.Count == 0)
+                return;
+
+            RefreshDecodedFileStatuses(_decodedFiles);
+
+            if (selectedItems.Any(file => file.Status == DecodedSourceStatus.DuplicateTarget))
+            {
+                RefreshDecodedBundleFilesList();
+                UpdateDecodedPanelButtons();
+                RefreshAllOpenDecodedViewers();
+                ShowDuplicateTargetWarning();
+                return;
+            }
+
+            ApplyDecodedFiles(selectedItems, "There are no selected decoded files with changes to apply.", "Apply decoded changes to selected files?");
+        }
+
+        private void RemoveSelectedDecodedFilesButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (DecodedBundleFilesListView.SelectedItems.Count == 0)
+                return;
+
+            var selectedItems = new List<DecodedBundleListItem>();
+
+            foreach (var item in DecodedBundleFilesListView.SelectedItems)
+            {
+                if (item is DecodedBundleListItem decodedFile)
+                    selectedItems.Add(decodedFile);
+            }
+
+            if (selectedItems.Count == 0)
+                return;
+
+            CloseDecodedViewersFor(selectedItems);
+
+            foreach (var decodedFile in selectedItems)
+                _decodedFiles.Remove(decodedFile);
+
+            RefreshDecodedFileStatuses(_decodedFiles);
+            RefreshDecodedBundleFilesList();
+            UpdateDecodedPanelButtons();
+            RefreshAllOpenDecodedViewers();
+
+            ShowTemporaryStatus($"Removed {selectedItems.Count} decoded file(s).");
+        }
+
+        private void CloseAllDecodedViewersButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAllDecodedViewers();
+        }
+
+        private void DecodedBundleFilesListView_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            UpdateDecodedPanelButtons();
+        }
+
+        private List<DecodedBundleListItem> GetSelectedDecodedFiles()
+        {
+            var selectedItems = new List<DecodedBundleListItem>();
+
+            foreach (var item in DecodedBundleFilesListView.SelectedItems)
+            {
+                if (item is DecodedBundleListItem decodedFile)
+                    selectedItems.Add(decodedFile);
+            }
+
+            return selectedItems;
+        }
+
+        private void ApplyDecodedFiles(List<DecodedBundleListItem> decodedFiles, string noApplicableMessage, string confirmationTitle)
+        {
+            var differentFiles = decodedFiles.Where(file => file.Status == DecodedSourceStatus.Different).ToList();
+            var missingFiles = decodedFiles.Where(file => file.Status == DecodedSourceStatus.Missing).ToList();
+
+            if (differentFiles.Count == 0 && missingFiles.Count == 0)
+            {
+                RefreshDecodedBundleFilesList();
+                UpdateDecodedPanelButtons();
+                RefreshAllOpenDecodedViewers();
+                ShowInformationMessage("Apply changes", noApplicableMessage);
+                return;
+            }
+
+            var confirmationMessage = BuildApplyConfirmationMessage(decodedFiles, differentFiles, missingFiles);
+            var confirmed = new APIOfDialogs.DialogMsgBoxAC(
+                confirmationTitle,
+                confirmationMessage,
+                "Yes",
+                MessageBoxImage.Warning).ShowDialog();
+
+            if (confirmed != true)
+            {
+                RefreshDecodedBundleFilesList();
+                UpdateDecodedPanelButtons();
+                RefreshAllOpenDecodedViewers();
+                return;
+            }
+
+            var filesToApply = differentFiles.Concat(missingFiles).ToList();
+            var appliedCount = 0;
+
+            foreach (var decodedFile in filesToApply)
+            {
+                if (!TryWriteDecodedContent(decodedFile, out var errorMessage))
+                {
+                    RefreshDecodedFileStatuses(_decodedFiles);
+                    RefreshDecodedBundleFilesList();
+                    UpdateDecodedPanelButtons();
+                    RefreshAllOpenDecodedViewers();
+
+                    var failureMessage = appliedCount == 0
+                        ? errorMessage
+                        : $"Applied {appliedCount} file(s), then stopped at the first write failure. {errorMessage}";
+
+                    ShowErrorMessage("Could not apply decoded file", failureMessage);
+                    return;
+                }
+
+                appliedCount++;
+            }
+
+            RefreshDecodedFileStatuses(_decodedFiles);
+            RefreshDecodedBundleFilesList();
+            UpdateDecodedPanelButtons();
+            RefreshAllOpenDecodedViewers();
+            ShowTemporaryStatus($"Applied {appliedCount} decoded file(s).");
+        }
+
+        private static string BuildApplyConfirmationMessage(
+            List<DecodedBundleListItem> decodedFiles,
+            List<DecodedBundleListItem> differentFiles,
+            List<DecodedBundleListItem> missingFiles)
+        {
+            var unchangedCount = decodedFiles.Count(file => file.Status == DecodedSourceStatus.Same);
+            var invalidPathCount = decodedFiles.Count(file => file.Status == DecodedSourceStatus.InvalidPath);
+            var sourceReadErrorCount = decodedFiles.Count(file => file.Status == DecodedSourceStatus.SourceReadError);
+            var builder = new StringBuilder();
+
+            builder.AppendLine($"Existing files to replace: {differentFiles.Count}");
+            builder.AppendLine($"Missing files to create: {missingFiles.Count}");
+            builder.AppendLine($"Unchanged files skipped: {unchangedCount}");
+            builder.AppendLine($"Invalid paths skipped: {invalidPathCount}");
+            builder.AppendLine($"Source read errors skipped: {sourceReadErrorCount}");
+            builder.AppendLine();
+
+            AppendPathPreview(builder, "Replace paths", differentFiles);
+            AppendPathPreview(builder, "Create paths", missingFiles);
+
+            builder.AppendLine("Continue?");
+            return builder.ToString();
+        }
+
+        private static void AppendPathPreview(StringBuilder builder, string title, List<DecodedBundleListItem> files)
+        {
+            if (files.Count == 0)
+                return;
+
+            builder.AppendLine(title + ":");
+
+            foreach (var file in files.Take(10))
+                builder.AppendLine(file.Path);
+
+            if (files.Count > 10)
+                builder.AppendLine($"...and {files.Count - 10} more files.");
+
+            builder.AppendLine();
+        }
+
+        private static bool TryWriteDecodedContent(DecodedBundleListItem decodedFile, out string errorMessage)
+        {
+            errorMessage = string.Empty;
+
+            if (!TryGetNormalizedTargetPath(decodedFile.Path, out var normalizedPath))
+            {
+                errorMessage = $"Invalid source path:\n{decodedFile.Path}";
+                return false;
+            }
+
+            try
+            {
+                var targetExists = File.Exists(normalizedPath);
+                var encoding = targetExists && HasUtf8Bom(normalizedPath)
+                    ? new UTF8Encoding(true)
+                    : new UTF8Encoding(false);
+
+                if (!targetExists)
+                {
+                    var parentFolderPath = Path.GetDirectoryName(normalizedPath);
+
+                    if (!string.IsNullOrWhiteSpace(parentFolderPath))
+                        Directory.CreateDirectory(parentFolderPath);
+                }
+
+                File.WriteAllText(normalizedPath, decodedFile.Content, encoding);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or DirectoryNotFoundException or PathTooLongException or NotSupportedException)
+            {
+                errorMessage = $"Could not write decoded content to:\n{normalizedPath}\n\n{ex.Message}";
+                return false;
+            }
+        }
+
+        private static bool HasUtf8Bom(string path)
+        {
+            using var stream = File.OpenRead(path);
+
+            if (stream.Length < 3)
+                return false;
+
+            return stream.ReadByte() == 0xEF
+                && stream.ReadByte() == 0xBB
+                && stream.ReadByte() == 0xBF;
+        }
+
+        private void ShowDuplicateTargetWarning()
+        {
+            ShowInformationMessage(
+                "Duplicate target paths",
+                "Multiple decoded files target the same source path. Remove the unwanted duplicates before applying changes.");
+        }
+
+        private void ShowInformationMessage(string title, string message)
+        {
+            new APIOfDialogs.DialogMsgBoxAC(
+                title,
+                message,
+                "OK",
+                MessageBoxImage.Information).ShowDialog();
+        }
+
+        private void ShowErrorMessage(string title, string message)
+        {
+            new APIOfDialogs.DialogMsgBoxAC(
+                title,
+                message,
+                "OK",
+                MessageBoxImage.Error).ShowDialog();
+        }
+
+        private void SetDecodedPanelExpanded(bool isExpanded)
+        {
+            _isDecodedPanelExpanded = isExpanded;
+
+            DecodedPanelColumn.Width = isExpanded ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+            DecodedPanelSplitterColumn.Width = isExpanded ? new GridLength(8) : new GridLength(0);
+            DecodedPanelBorder.Visibility = isExpanded ? Visibility.Visible : Visibility.Collapsed;
+            DecodedPanelGridSplitter.Visibility = isExpanded ? Visibility.Visible : Visibility.Collapsed;
+            ToggleDecodedPanelButton.Content = isExpanded ? "◀" : "▶";
         }
 
         private void ListDropGridSplitter_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -178,6 +507,21 @@ namespace ZCodeBundler
                 return;
 
             var paths = (string[])e.Data.GetData(DataFormats.FileDrop);
+
+            var bundlePaths = paths.Where(IsZCodeBundleFile).ToArray();
+            var normalPaths = paths.Where(path => !IsZCodeBundleFile(path)).ToArray();
+
+            if (bundlePaths.Length > 0)
+                TryDecodeDroppedBundleFiles(bundlePaths);
+
+            AddDroppedFilesAndFolders(normalPaths);
+        }
+
+        private void AddDroppedFilesAndFolders(string[] paths)
+        {
+            if (paths.Length == 0)
+                return;
+
             var folderPaths = new List<string>();
             var filePaths = new List<string>();
 
@@ -201,15 +545,407 @@ namespace ZCodeBundler
 
             if (folderPaths.Count == 0 && filePaths.Count == 0)
             {
-                MessageBox.Show(
-                    this,
-                    "Drop folders or files.",
+                new APIOfDialogs.DialogMsgBoxAC(
                     "Invalid drop",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
-
+                    "Drop folders or files.",
+                    "OK",
+                    MessageBoxImage.Information).ShowDialog();
                 ShowTemporaryStatus("Invalid drop.");
             }
+        }
+
+        private bool TryDecodeDroppedBundleFiles(string[] paths)
+        {
+            var bundlePaths = paths.Where(IsZCodeBundleFile).ToList();
+            if (bundlePaths.Count == 0)
+                return false;
+
+            CloseAllDecodedViewers();
+            ShowDecodedBundleFiles(new List<DecodedBundleListItem>());
+
+            var decodedItems = new List<DecodedBundleListItem>();
+            var decodedItemIndex = 0;
+
+            try
+            {
+                foreach (var bundlePath in bundlePaths)
+                {
+                    var decodedFiles = _bundleReader.Read(bundlePath);
+
+                    foreach (var decodedFile in decodedFiles)
+                    {
+                        decodedItems.Add(new DecodedBundleListItem(bundlePath, decodedItemIndex, decodedFile));
+                        decodedItemIndex++;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or SecurityException
+                or PathTooLongException
+                or NotSupportedException)
+            {
+                new APIOfDialogs.DialogMsgBoxAC(
+                    "Could not decode bundle",
+                    ex.Message,
+                    "OK",
+                    MessageBoxImage.Error).ShowDialog();
+
+                ShowTemporaryStatus("Could not decode bundle.");
+                return true;
+            }
+
+            ShowDecodedBundleFiles(decodedItems);
+            SetDecodedPanelExpanded(true);
+            ShowTemporaryStatus($"Decoded {decodedItems.Count} files from {bundlePaths.Count} bundle file(s).");
+            return true;
+        }
+
+        private void ShowDecodedBundleFiles(List<DecodedBundleListItem> decodedFiles)
+        {
+            _decodedFiles.Clear();
+            _decodedFiles.AddRange(decodedFiles);
+            RefreshDecodedFileStatuses(_decodedFiles);
+            RefreshDecodedBundleFilesList();
+            UpdateDecodedPanelButtons();
+        }
+
+        private void RefreshDecodedBundleFilesList()
+        {
+            DecodedBundleFilesListView.ItemsSource = null;
+            DecodedBundleFilesListView.ItemsSource = _decodedFiles;
+            DecodedBundleFilesCountTextBlock.Text = $"{_decodedFiles.Count} files";
+        }
+
+        private void UpdateDecodedPanelButtons()
+        {
+            var hasDecodedFiles = _decodedFiles.Count > 0;
+            var hasSelectedDecodedFiles = DecodedBundleFilesListView.SelectedItems.Count > 0;
+
+            ClearDecodedBundleButton.IsEnabled = hasDecodedFiles;
+            ApplyAllDecodedChangesButton.IsEnabled = hasDecodedFiles;
+            ApplySelectedDecodedChangesButton.IsEnabled = hasSelectedDecodedFiles;
+            RemoveSelectedDecodedFilesButton.IsEnabled = hasDecodedFiles && hasSelectedDecodedFiles;
+            CloseAllDecodedViewersButton.IsEnabled = _openDecodedViewers.Count > 0;
+        }
+
+        private static void RefreshDecodedFileStatuses(List<DecodedBundleListItem> decodedFiles)
+        {
+            var normalizedPathsByItem = new Dictionary<DecodedBundleListItem, string>();
+
+            foreach (var decodedFile in decodedFiles)
+            {
+                decodedFile.Status = GetSourceStatus(decodedFile, out var normalizedPath, out var statusDetail);
+                decodedFile.StatusDetail = statusDetail;
+
+                if (!string.IsNullOrWhiteSpace(normalizedPath))
+                    normalizedPathsByItem[decodedFile] = normalizedPath;
+            }
+
+            var targetCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var normalizedPath in normalizedPathsByItem.Values)
+            {
+                targetCounts.TryGetValue(normalizedPath, out var count);
+                targetCounts[normalizedPath] = count + 1;
+            }
+
+            foreach (var decodedFile in decodedFiles)
+            {
+                if (!normalizedPathsByItem.TryGetValue(decodedFile, out var normalizedPath))
+                    continue;
+
+                if (targetCounts[normalizedPath] <= 1)
+                    continue;
+
+                decodedFile.Status = DecodedSourceStatus.DuplicateTarget;
+                decodedFile.StatusDetail = "Multiple decoded files target the same source path.";
+            }
+        }
+
+        private static DecodedSourceStatus GetSourceStatus(DecodedBundleListItem decodedFile, out string? normalizedPath, out string statusDetail)
+        {
+            if (!TryGetNormalizedTargetPath(decodedFile.Path, out normalizedPath))
+            {
+                statusDetail = "PATH is not a valid absolute source file path.";
+                return DecodedSourceStatus.InvalidPath;
+            }
+
+            try
+            {
+                using var reader = new StreamReader(normalizedPath, Encoding.UTF8, true);
+                var sourceContent = reader.ReadToEnd();
+
+                statusDetail = string.Empty;
+                return string.Equals(sourceContent, decodedFile.Content, StringComparison.Ordinal)
+                    ? DecodedSourceStatus.Same
+                    : DecodedSourceStatus.Different;
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                statusDetail = string.Empty;
+                return DecodedSourceStatus.Missing;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or PathTooLongException)
+            {
+                statusDetail = ex.Message;
+                return DecodedSourceStatus.SourceReadError;
+            }
+        }
+
+        private static bool TryGetNormalizedTargetPath(string targetPath, out string? normalizedPath)
+        {
+            normalizedPath = null;
+
+            if (string.IsNullOrWhiteSpace(targetPath))
+                return false;
+
+            try
+            {
+                if (!Path.IsPathFullyQualified(targetPath))
+                    return false;
+
+                normalizedPath = Path.GetFullPath(targetPath);
+                return true;
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException or SecurityException)
+            {
+                return false;
+            }
+        }
+
+        private void DecodedBundleFilesListView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (DecodedBundleFilesListView.SelectedItem is not DecodedBundleListItem decodedFile)
+                return;
+
+            RefreshDecodedFileStatuses(_decodedFiles);
+            RefreshDecodedBundleFilesList();
+            UpdateDecodedPanelButtons();
+            OpenDecodedViewer(decodedFile);
+        }
+
+        private void OpenDecodedViewer(DecodedBundleListItem decodedFile)
+        {
+            var viewerKey = GetDecodedViewerKey(decodedFile);
+
+            if (_openDecodedViewers.TryGetValue(viewerKey, out var existingViewer))
+            {
+                if (existingViewer.WindowState == WindowState.Minimized)
+                    existingViewer.WindowState = WindowState.Normal;
+
+                existingViewer.Activate();
+                return;
+            }
+
+            var sourceContent = GetSourceContentForViewer(decodedFile, out var sourceHeader, out var sourceState);
+            var viewer = new DecodedBundleViewerWindow(
+                decodedFile,
+                sourceState,
+                sourceHeader,
+                sourceContent,
+                "Decoded bundle content",
+                GetViewerStatusText(decodedFile),
+                ApplyDecodedViewerChanges)
+            {
+                Owner = this
+            };
+
+            viewer.Closed += (_, _) =>
+            {
+                _openDecodedViewers.Remove(viewerKey);
+                UpdateDecodedPanelButtons();
+            };
+
+            _openDecodedViewers[viewerKey] = viewer;
+            viewer.Show();
+            UpdateDecodedPanelButtons();
+        }
+
+        private void ApplyDecodedViewerChanges(DecodedBundleViewerWindow viewer)
+        {
+            var decodedFile = viewer.DecodedFile;
+            RefreshDecodedFileStatuses(_decodedFiles);
+            RefreshDecodedBundleFilesList();
+            UpdateDecodedPanelButtons();
+            RefreshDecodedViewer(viewer);
+
+            if (decodedFile.Status == DecodedSourceStatus.DuplicateTarget)
+            {
+                ShowDuplicateTargetWarning();
+                return;
+            }
+
+            if (decodedFile.Status is not (DecodedSourceStatus.Different or DecodedSourceStatus.Missing))
+                return;
+
+            var currentSourceContent = GetSourceContentForViewer(decodedFile, out _, out var currentSourceState);
+            var confirmationMessage = GetViewerApplyConfirmationMessage(viewer, currentSourceState, currentSourceContent);
+            var confirmed = new APIOfDialogs.DialogMsgBoxAC(
+                "Apply decoded changes",
+                confirmationMessage,
+                "Yes",
+                MessageBoxImage.Warning).ShowDialog();
+
+            if (confirmed != true)
+            {
+                RefreshDecodedFileStatuses(_decodedFiles);
+                RefreshDecodedBundleFilesList();
+                UpdateDecodedPanelButtons();
+                RefreshAllOpenDecodedViewers();
+                return;
+            }
+
+            if (!TryWriteDecodedContent(decodedFile, out var errorMessage))
+            {
+                RefreshDecodedFileStatuses(_decodedFiles);
+                RefreshDecodedBundleFilesList();
+                UpdateDecodedPanelButtons();
+                RefreshAllOpenDecodedViewers();
+                ShowErrorMessage("Could not apply decoded file", errorMessage);
+                return;
+            }
+
+            RefreshDecodedFileStatuses(_decodedFiles);
+            RefreshDecodedBundleFilesList();
+            UpdateDecodedPanelButtons();
+            RefreshAllOpenDecodedViewers();
+            ShowTemporaryStatus($"Applied decoded file: {decodedFile.DisplayName}");
+        }
+
+        private static string GetViewerApplyConfirmationMessage(
+            DecodedBundleViewerWindow viewer,
+            DecodedBundleViewerWindow.SourceSnapshotState currentSourceState,
+            string currentSourceContent)
+        {
+            var targetPath = viewer.DecodedFile.Path;
+
+            if (viewer.CurrentStatus == DecodedSourceStatus.Different)
+            {
+                if (viewer.OpenedSourceState == DecodedBundleViewerWindow.SourceSnapshotState.Exists
+                    && currentSourceState == DecodedBundleViewerWindow.SourceSnapshotState.Exists
+                    && !string.Equals(currentSourceContent, viewer.OpenedSourceContent, StringComparison.Ordinal))
+                {
+                    return $"The source file changed since this viewer opened.\nTarget path:\n{targetPath}\n\nApplying will replace the current file content with decoded bundle content.\nContinue?";
+                }
+
+                if (viewer.OpenedSourceState == DecodedBundleViewerWindow.SourceSnapshotState.Missing
+                    && currentSourceState == DecodedBundleViewerWindow.SourceSnapshotState.Exists)
+                {
+                    return $"The source file was missing when this viewer opened, but it now exists.\nTarget path:\n{targetPath}\n\nApplying will replace it with decoded bundle content.\nContinue?";
+                }
+
+                return $"Apply decoded content to this file?\nTarget path:\n{targetPath}\n\nThe existing file content will be replaced.\nContinue?";
+            }
+
+            if (viewer.OpenedSourceState == DecodedBundleViewerWindow.SourceSnapshotState.Exists
+                && currentSourceState == DecodedBundleViewerWindow.SourceSnapshotState.Missing)
+            {
+                return $"The source file existed when this viewer opened, but it is now missing.\nTarget path:\n{targetPath}\n\nApplying will recreate it from decoded bundle content.\nContinue?";
+            }
+
+            if (viewer.OpenedSourceState == DecodedBundleViewerWindow.SourceSnapshotState.Missing
+                && currentSourceState == DecodedBundleViewerWindow.SourceSnapshotState.Exists)
+            {
+                return $"The source file was missing when this viewer opened, but it now exists.\nTarget path:\n{targetPath}\n\nApplying will replace it with decoded bundle content.\nContinue?";
+            }
+
+            return $"Create this source file from decoded content?\nTarget path:\n{targetPath}\n\nMissing parent folders will be created if needed.\nContinue?";
+        }
+
+        private void RefreshAllOpenDecodedViewers()
+        {
+            foreach (var viewer in _openDecodedViewers.Values.ToList())
+                RefreshDecodedViewer(viewer);
+        }
+
+        private void RefreshDecodedViewer(DecodedBundleViewerWindow viewer)
+        {
+            var sourceContent = GetSourceContentForViewer(viewer.DecodedFile, out var sourceHeader, out _);
+            viewer.Refresh(sourceHeader, sourceContent, GetViewerStatusText(viewer.DecodedFile), viewer.DecodedFile.Status);
+        }
+
+        private void CloseAllDecodedViewers()
+        {
+            foreach (var viewer in _openDecodedViewers.Values.ToList())
+                viewer.Close();
+
+            _openDecodedViewers.Clear();
+            UpdateDecodedPanelButtons();
+        }
+
+        private void CloseDecodedViewersFor(List<DecodedBundleListItem> decodedFiles)
+        {
+            foreach (var decodedFile in decodedFiles)
+            {
+                var viewerKey = GetDecodedViewerKey(decodedFile);
+
+                if (_openDecodedViewers.TryGetValue(viewerKey, out var viewer))
+                    viewer.Close();
+            }
+
+            UpdateDecodedPanelButtons();
+        }
+
+        private static string GetDecodedViewerKey(DecodedBundleListItem decodedFile)
+        {
+            return decodedFile.BundlePath + "\u001F" + decodedFile.Path + "\u001F" + decodedFile.DecodedItemIndex;
+        }
+
+        private static string GetSourceContentForViewer(
+            DecodedBundleListItem decodedFile,
+            out string sourceHeader,
+            out DecodedBundleViewerWindow.SourceSnapshotState sourceState)
+        {
+            sourceHeader = "Source / current file";
+            sourceState = DecodedBundleViewerWindow.SourceSnapshotState.Exists;
+
+            if (!TryGetNormalizedTargetPath(decodedFile.Path, out var normalizedPath))
+            {
+                sourceHeader = "Invalid source path";
+                sourceState = DecodedBundleViewerWindow.SourceSnapshotState.InvalidPath;
+                return "PATH is not a valid absolute source path.";
+            }
+
+            try
+            {
+                using var reader = new StreamReader(normalizedPath, Encoding.UTF8, true);
+                return reader.ReadToEnd();
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                sourceHeader = "Missing source file";
+                sourceState = DecodedBundleViewerWindow.SourceSnapshotState.Missing;
+                return "Source file does not exist.";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or PathTooLongException)
+            {
+                sourceHeader = "Source read error";
+                sourceState = DecodedBundleViewerWindow.SourceSnapshotState.SourceReadError;
+                return $"Source file could not be read.\n{ex.Message}";
+            }
+        }
+
+        private static string GetViewerStatusText(DecodedBundleListItem decodedFile)
+        {
+            return decodedFile.Status switch
+            {
+                DecodedSourceStatus.Same => "Same: source content exactly matches decoded content.",
+                DecodedSourceStatus.Different => "Different: source content differs from decoded content.",
+                DecodedSourceStatus.Missing => "Missing: source file does not exist. Decoded content is shown as added content.",
+                DecodedSourceStatus.InvalidPath => "InvalidPath: PATH is not a valid absolute source path.",
+                DecodedSourceStatus.DuplicateTarget => "DuplicateTarget: multiple decoded files target this source path, so apply is blocked.",
+                DecodedSourceStatus.SourceReadError => string.IsNullOrWhiteSpace(decodedFile.StatusDetail)
+                    ? "SourceReadError: source file could not be read."
+                    : $"SourceReadError: source file could not be read. {decodedFile.StatusDetail}",
+                _ => decodedFile.Status.ToString()
+            };
+        }
+
+        private static bool IsZCodeBundleFile(string path)
+        {
+            return File.Exists(path) && path.EndsWith(".zcb.txt", StringComparison.OrdinalIgnoreCase);
         }
 
         private void AddFolders(IReadOnlyList<string> folderPaths)
@@ -223,13 +959,11 @@ namespace ZCodeBundler
 
                 if (fileCount == 0)
                 {
-                    MessageBox.Show(
-                        this,
-                        "No eligible files were found in the selected folder.",
+                    new APIOfDialogs.DialogMsgBoxAC(
                         "No files found",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-
+                        "No eligible files were found in the selected folder.",
+                        "OK",
+                        MessageBoxImage.Information).ShowDialog();
                     ShowTemporaryStatus("No eligible files found.");
                     return;
                 }
@@ -247,13 +981,11 @@ namespace ZCodeBundler
             }
             catch (Exception ex) when (ex is ArgumentException or DirectoryNotFoundException or IOException or UnauthorizedAccessException)
             {
-                MessageBox.Show(
-                    this,
-                    ex.Message,
+                new APIOfDialogs.DialogMsgBoxAC(
                     "Could not scan folder",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-
+                    ex.Message,
+                    "OK",
+                    MessageBoxImage.Error).ShowDialog();
                 ShowTemporaryStatus("Could not scan folder.");
             }
         }
@@ -274,12 +1006,11 @@ namespace ZCodeBundler
                 }
                 catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or IOException or UnauthorizedAccessException)
                 {
-                    MessageBox.Show(
-                        this,
-                        ex.Message,
+                    new APIOfDialogs.DialogMsgBoxAC(
                         "Could not add file",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Error);
+                        ex.Message,
+                        "OK",
+                        MessageBoxImage.Error).ShowDialog();
                 }
             }
 
@@ -299,11 +1030,7 @@ namespace ZCodeBundler
             var nestedLists = BuildNestedLists(rootNode);
             var displayNames = BuildDisplayNames(rootNode);
 
-            var dialog = new DialogTreeSelection(
-                "Select Files",
-                "Choose the files and folders to add to the bundle.",
-                nestedLists,
-                displayNames);
+            var dialog = new DialogTreeSelection("Select Files", "Choose the files and folders to add to the bundle.", nestedLists, displayNames);
 
             if (dialog.ShowDialog() != true)
             {
@@ -316,13 +1043,11 @@ namespace ZCodeBundler
 
             if (selectedFiles.Count == 0)
             {
-                MessageBox.Show(
-                    this,
-                    "No files were selected.",
+                new APIOfDialogs.DialogMsgBoxAC(
                     "No files selected",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
-
+                    "No files were selected.",
+                    "OK",
+                    MessageBoxImage.Information).ShowDialog();
                 ShowTemporaryStatus("No files selected.");
                 return;
             }
@@ -366,10 +1091,7 @@ namespace ZCodeBundler
             RefreshSelectedFilesList();
             UpdateFileActionButtons();
             UpdateTotalFilesStatus();
-
-            ShowTemporaryStatus(addedCount == 0
-                ? "No new files added."
-                : $"Added {addedCount} files.");
+            ShowTemporaryStatus(addedCount == 0 ? "No new files added." : $"Added {addedCount} files.");
         }
 
         private void RefreshSelectedFilesList()
@@ -413,11 +1135,7 @@ namespace ZCodeBundler
             if (unknownExtensions.Count == 0)
                 return rootNode;
 
-            var dialog = new DialogMultiSelection(
-                "Unknown File Types",
-                "Select the unknown file extensions you want to include.",
-                unknownExtensions);
-
+            var dialog = new DialogMultiSelection("Unknown File Types", "Select the unknown file extensions you want to include.", unknownExtensions);
             var includedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             if (dialog.ShowDialog() == true)
@@ -459,11 +1177,7 @@ namespace ZCodeBundler
             var orderedExtensions = new List<string>(unknownExtensions);
             orderedExtensions.Sort(StringComparer.OrdinalIgnoreCase);
 
-            var dialog = new DialogMultiSelection(
-                "Unknown File Types",
-                "Select the unknown file extensions you want to include.",
-                orderedExtensions);
-
+            var dialog = new DialogMultiSelection("Unknown File Types", "Select the unknown file extensions you want to include.", orderedExtensions);
             var includedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             if (dialog.ShowDialog() == true)
@@ -504,23 +1218,13 @@ namespace ZCodeBundler
                     children.Add(filteredFolder);
             }
 
-            return new FileTreeNode(
-                node.DisplayName,
-                node.FullPath,
-                node.RelativePath,
-                false,
-                node.FileType,
-                node.IsKnownFileType,
-                node.DateModified,
-                children);
+            return new FileTreeNode(node.DisplayName, node.FullPath, node.RelativePath, false, node.FileType, node.IsKnownFileType, node.DateModified, children);
         }
 
         private static List<FileTreeNode> GetAllFiles(FileTreeNode rootNode)
         {
             var files = new List<FileTreeNode>();
-
             AddFilesFrom(rootNode);
-
             return files;
 
             void AddFilesFrom(FileTreeNode node)
@@ -548,7 +1252,7 @@ namespace ZCodeBundler
                 result.Add(new FileTreeNode(
                     file.DisplayName,
                     file.FullPath,
-                    $"selected_code/{file.RelativePath}",
+                    file.FullPath,
                     isFile: true,
                     file.FileType,
                     file.IsKnownFileType,
@@ -572,11 +1276,8 @@ namespace ZCodeBundler
                 var sharedPartCount = 0;
                 var maxSharedParts = Math.Min(commonPathParts.Count, pathParts.Count);
 
-                while (sharedPartCount < maxSharedParts &&
-                       string.Equals(commonPathParts[sharedPartCount], pathParts[sharedPartCount], StringComparison.OrdinalIgnoreCase))
-                {
+                while (sharedPartCount < maxSharedParts && string.Equals(commonPathParts[sharedPartCount], pathParts[sharedPartCount], StringComparison.OrdinalIgnoreCase))
                     sharedPartCount++;
-                }
 
                 commonPathParts = commonPathParts.Take(sharedPartCount).ToList();
 
@@ -637,10 +1338,7 @@ namespace ZCodeBundler
             }
 
             var sanitizedFileName = builder.ToString().Trim();
-
-            return string.IsNullOrWhiteSpace(sanitizedFileName)
-                ? "SelectedCode"
-                : sanitizedFileName;
+            return string.IsNullOrWhiteSpace(sanitizedFileName) ? "SelectedCode" : sanitizedFileName;
         }
 
         private static bool HasDroppedFilesOrFolders(DragEventArgs e)
@@ -662,7 +1360,6 @@ namespace ZCodeBundler
         private static List<string> GetUnknownExtensions(FileTreeNode rootNode)
         {
             var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
             CollectUnknownExtensions(rootNode, extensions);
 
             var orderedExtensions = new List<string>(extensions);
@@ -737,7 +1434,6 @@ namespace ZCodeBundler
         private static string GetExtensionLabel(string fullPath)
         {
             var extension = Path.GetExtension(fullPath);
-
             return string.IsNullOrWhiteSpace(extension) ? "(no extension)" : extension.ToLowerInvariant();
         }
 

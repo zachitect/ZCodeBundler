@@ -1,4 +1,4 @@
-﻿namespace ZCodeBundler;
+﻿namespace ZCodeBundler.Bundling;
 
 public sealed class FileTreeNode
 {

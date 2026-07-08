@@ -1,13 +1,13 @@
 ﻿using System.IO;
 using System.Text;
 
-namespace ZCodeBundler;
+namespace ZCodeBundler.Bundling;
 
 public sealed class BundleWriter
 {
-    private const string FileStartDelimiter = "--- ZCODEBUNDLE_FILE_START ---";
-    private const string ContentStartDelimiter = "--- ZCODEBUNDLE_CONTENT_START ---";
-    private const string FileEndDelimiter = "--- ZCODEBUNDLE_FILE_END ---";
+    private const string FileStartDelimiter = "--- ZCODEBUNDLE_" + "FILE_START ---";
+    private const string ContentStartDelimiter = "--- ZCODEBUNDLE_" + "CONTENT_START ---";
+    private const string FileEndDelimiter = "--- ZCODEBUNDLE_" + "FILE_END ---";
 
     private static readonly Encoding OutputEncoding = new UTF8Encoding(false);
 
@@ -75,14 +75,15 @@ public sealed class BundleWriter
         outputWriter.WriteLine($"GENERATED_AT: {DateTime.Now:yyyy-MM-dd HH:mm}");
         outputWriter.WriteLine($"FILE_COUNT: {writtenFileCount}");
         outputWriter.WriteLine();
+
         WriteReaderInstructions(outputWriter);
+
         outputWriter.WriteLine();
 
         using var bodyReader = new StreamReader(bodyPath, OutputEncoding);
-
         var buffer = new char[8192];
-        int charactersRead;
 
+        int charactersRead;
         while ((charactersRead = bodyReader.Read(buffer, 0, buffer.Length)) > 0)
             outputWriter.Write(buffer, 0, charactersRead);
     }
@@ -94,32 +95,29 @@ public sealed class BundleWriter
         writer.WriteLine($"Each bundled file starts with {FileStartDelimiter}.");
         writer.WriteLine($"File metadata appears before {ContentStartDelimiter}.");
         writer.WriteLine($"Original file content appears after {ContentStartDelimiter}.");
-        writer.WriteLine($"Each bundled file ends at {FileEndDelimiter}.");
+        writer.WriteLine("If CONTENT_LENGTH is present, read exactly that many characters after the content start delimiter.");
+        writer.WriteLine($"Each bundled file ends with {FileEndDelimiter}.");
         writer.WriteLine("Use PATH as the file identity.");
         writer.WriteLine("Do not treat bundle headers, metadata lines, or delimiter lines as source code.");
     }
 
     private static void WriteFileBlock(StreamWriter writer, FileTreeNode file)
     {
+        using var reader = new StreamReader(file.FullPath, Encoding.UTF8, true);
+        var content = reader.ReadToEnd();
+
         var modifiedText = file.DateModified.HasValue
             ? file.DateModified.Value.ToString("yyyy-MM-dd HH:mm:ss")
             : string.Empty;
 
         writer.WriteLine(FileStartDelimiter);
         writer.WriteLine($"FILE_NAME: {file.DisplayName}");
-        writer.WriteLine($"PATH: {file.RelativePath}");
+        writer.WriteLine($"PATH: {file.FullPath}");
         writer.WriteLine($"TYPE: {file.FileType}");
         writer.WriteLine($"DATE_MODIFIED: {modifiedText}");
+        writer.WriteLine($"CONTENT_LENGTH: {content.Length}");
         writer.WriteLine(ContentStartDelimiter);
-
-        using var reader = new StreamReader(file.FullPath, Encoding.UTF8, true);
-
-        var buffer = new char[8192];
-        int charactersRead;
-
-        while ((charactersRead = reader.Read(buffer, 0, buffer.Length)) > 0)
-            writer.Write(buffer, 0, charactersRead);
-
+        writer.Write(content);
         writer.WriteLine();
         writer.WriteLine(FileEndDelimiter);
     }
