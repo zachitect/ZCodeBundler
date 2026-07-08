@@ -4,6 +4,9 @@
 
 It is designed for chat-based LLM workflows, code review discussions, debugging sessions, and any situation where related project files need to be shared as one structured plain-text file instead of many separate uploads.
 
+<img width="1586" height="793" alt="image" src="https://github.com/user-attachments/assets/aded3649-fb9d-4a2e-8200-89a9a072aea3" />
+<img width="1586" height="793" alt="image" src="https://github.com/user-attachments/assets/a513c72c-703c-4e55-8ccd-3ef64172a1b8" />
+
 ---
 
 ## What ZCodeBundler Does
