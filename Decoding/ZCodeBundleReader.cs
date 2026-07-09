@@ -75,10 +75,14 @@ public sealed class ZCodeBundleReader
                 content = TrimSingleTrailingNewLine(content);
             }
 
+            var normalizedPath = path ?? string.Empty;
+            var normalizedFileName = NormalizeFileName(fileName, normalizedPath);
+            var normalizedFileType = NormalizeFileType(fileType, normalizedFileName, normalizedPath);
+
             files.Add(new BundledCodeFile(
-                fileName ?? "",
-                path ?? "",
-                fileType ?? "",
+                normalizedFileName,
+                normalizedPath,
+                normalizedFileType,
                 ParseDateModified(dateModifiedText),
                 content));
 
@@ -156,6 +160,33 @@ public sealed class ZCodeBundleReader
             throw new InvalidDataException("Bundle file has a negative content length.");
 
         return contentLength;
+    }
+
+    private static string NormalizeFileName(string? fileName, string path)
+    {
+        if (!string.IsNullOrWhiteSpace(fileName))
+            return fileName;
+
+        return GetFinalPathSegment(path);
+    }
+
+    private static string NormalizeFileType(string? fileType, string fileName, string path)
+    {
+        if (!string.IsNullOrWhiteSpace(fileType))
+            return fileType;
+
+        var fileTypeSource = string.IsNullOrWhiteSpace(fileName) ? path : fileName;
+        return ZCodeBundler.CodeFileTypeResolver.GetFileType(fileTypeSource);
+    }
+
+    private static string GetFinalPathSegment(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
+
+        var normalizedPath = path.Trim().Replace('\\', '/').TrimEnd('/');
+        var lastSeparatorIndex = normalizedPath.LastIndexOf('/');
+        return lastSeparatorIndex < 0 ? normalizedPath : normalizedPath[(lastSeparatorIndex + 1)..];
     }
 
     private static DateTime? ParseDateModified(string? value)

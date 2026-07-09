@@ -9,31 +9,52 @@
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResize">
     <Window.Resources>
-        <Style x:Key="DiffCellTextStyle" TargetType="TextBlock">
+        <Style x:Key="DiffContentTextStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Padding" Value="4,2" />
+        </Style>
+
+        <Style x:Key="DiffLineNumberStyle" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Consolas" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="TextWrapping" Value="NoWrap" />
             <Setter Property="Padding" Value="4,2" />
-        </Style>
-        <Style x:Key="DiffLineNumberStyle" TargetType="TextBlock" BasedOn="{StaticResource DiffCellTextStyle}">
-            <Setter Property="Foreground" Value="#666666" />
+            <Setter Property="Foreground" Value="{StaticResource ColorTextMuted}" />
             <Setter Property="TextAlignment" Value="Right" />
         </Style>
 
-        <Style TargetType="{x:Type ScrollBar}">
+
+        <Style x:Key="DiffDataGridRowStyle" TargetType="DataGridRow">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#333333" />
             <Style.Triggers>
-                <Trigger Property="Orientation" Value="Vertical">
-                    <Setter Property="Width" Value="8" />
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource ListRowHoverBackground}" />
                 </Trigger>
-                <Trigger Property="Orientation" Value="Horizontal">
-                    <Setter Property="Height" Value="8" />
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource ListRowSelectedBackground}" />
+                    <Setter Property="Foreground" Value="{StaticResource ListRowSelectedForeground}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="DiffDataGridCellStyle" TargetType="DataGridCell">
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="BorderThickness" Value="0" />
                 </Trigger>
             </Style.Triggers>
         </Style>
     </Window.Resources>
 
-    <DockPanel Background="#F5F6F8">
-        <Border DockPanel.Dock="Top" Margin="8" Padding="8" Background="White" BorderBrush="#C8CDD6" BorderThickness="1" CornerRadius="5">
+    <DockPanel Background="{StaticResource ColorWindowBackground}">
+        <Border DockPanel.Dock="Top" Margin="8" Padding="8" Background="{StaticResource ColorSurface}" BorderBrush="{StaticResource ColorBorderDefault}" BorderThickness="1" CornerRadius="5">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -45,61 +66,64 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Row="0" Grid.Column="0" Grid.RowSpan="2" Margin="0,0,12,0">
                     <TextBlock x:Name="StatusTextBlock" FontWeight="SemiBold" TextWrapping="Wrap" />
-                    <TextBlock x:Name="TargetPathTextBlock" Margin="0,4,0,0" Foreground="#666666" TextWrapping="Wrap" />
+                    <TextBlock x:Name="TargetPathTextBlock" Margin="0,4,0,0" Foreground="{StaticResource ColorTextMuted}" TextWrapping="Wrap" />
                 </StackPanel>
-                <Button Grid.Row="0" Grid.Column="1" x:Name="ApplyChangesButton" Content="Apply Changes" Padding="12,4" MinWidth="120" IsEnabled="False" Click="ApplyChangesButton_Click" />
+                <Button Grid.Row="0" Grid.Column="1" x:Name="ApplyChangesButton" Content="Apply Changes" MinWidth="120" IsEnabled="False" Style="{StaticResource CompactActionButtonStyle}" Click="ApplyChangesButton_Click" />
+                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                    <Button x:Name="PreviousDiffButton" Content="Previous Diff" MinWidth="120" Margin="0,0,8,0" IsEnabled="False" Style="{StaticResource CompactActionButtonStyle}" Click="PreviousDiffButton_Click" />
+                    <Button x:Name="NextDiffButton" Content="Next Diff" MinWidth="120" IsEnabled="False" Style="{StaticResource CompactActionButtonStyle}" Click="NextDiffButton_Click" />
+                </StackPanel>
             </Grid>
         </Border>
 
-        <Border Margin="8" Background="White" BorderBrush="#C8CDD6" BorderThickness="1" CornerRadius="0">
+        <Border Margin="8" Background="{StaticResource ColorSurface}" BorderBrush="{StaticResource ColorBorderDefault}" BorderThickness="1" CornerRadius="5">
             <DataGrid x:Name="DiffRowsDataGrid"
-              ItemsSource="{Binding DiffRows}"
-              AutoGenerateColumns="False"
-              IsReadOnly="True"
-              HeadersVisibility="Column"
-              GridLinesVisibility="None"
-              CanUserAddRows="False"
-              CanUserDeleteRows="False"
-              CanUserReorderColumns="False"
-              CanUserResizeColumns="False"
-              CanUserSortColumns="False"
-              RowHeaderWidth="0"
-              BorderThickness="0"
-              SelectionMode="Extended"
-              SelectionUnit="FullRow"
-              ScrollViewer.HorizontalScrollBarVisibility="Auto"
-              ScrollViewer.VerticalScrollBarVisibility="Auto">
-
+                      ItemsSource="{Binding DiffRows}"
+                      AutoGenerateColumns="False"
+                      IsReadOnly="True"
+                      HeadersVisibility="Column"
+                      GridLinesVisibility="None"
+                      CanUserAddRows="False"
+                      CanUserDeleteRows="False"
+                      CanUserReorderColumns="False"
+                      CanUserResizeColumns="False"
+                      CanUserSortColumns="False"
+                      RowHeaderWidth="0"
+                      BorderThickness="0"
+                      Background="{StaticResource ColorSurface}"
+                      SelectionMode="Extended"
+                      SelectionUnit="FullRow"
+                      RowStyle="{StaticResource DiffDataGridRowStyle}"
+                      CellStyle="{StaticResource DiffDataGridCellStyle}"
+                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                      ScrollViewer.VerticalScrollBarVisibility="Auto">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="#"
-                                Width="50"
-                                Binding="{Binding SourceLineNumberText}"
-                                ElementStyle="{StaticResource DiffLineNumberStyle}" />
-
+                                        Width="50"
+                                        Binding="{Binding SourceLineNumberText}"
+                                        ElementStyle="{StaticResource DiffLineNumberStyle}" />
                     <DataGridTemplateColumn Header="Source / current file"
-                                    Width="*">
+                                            Width="*">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <Border Background="{Binding SourceBackground}">
-                                    <TextBlock Style="{StaticResource DiffCellTextStyle}"
-                                       Text="{Binding SourceText}" />
+                                    <TextBlock Style="{StaticResource DiffContentTextStyle}"
+                                               Text="{Binding SourceText}" />
                                 </Border>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-
                     <DataGridTextColumn Header="#"
-                                Width="50"
-                                Binding="{Binding DecodedLineNumberText}"
-                                ElementStyle="{StaticResource DiffLineNumberStyle}" />
-
+                                        Width="50"
+                                        Binding="{Binding DecodedLineNumberText}"
+                                        ElementStyle="{StaticResource DiffLineNumberStyle}" />
                     <DataGridTemplateColumn Header="Decoded bundle content"
-                                    Width="*">
+                                            Width="*">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <Border Background="{Binding DecodedBackground}">
-                                    <TextBlock Style="{StaticResource DiffCellTextStyle}"
-                                       Text="{Binding DecodedText}" />
+                                    <TextBlock Style="{StaticResource DiffContentTextStyle}"
+                                               Text="{Binding DecodedText}" />
                                 </Border>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>

@@ -1,4 +1,8 @@
-﻿using System.Windows;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using ZCodeBundler.Decoding;
 
@@ -15,17 +19,17 @@ namespace ZCodeBundler
         }
 
         private const int MaxAlignedDiffLineCount = 5000;
-
         private static readonly Brush NormalBackground = Brushes.Transparent;
         private static readonly Brush RemovedBackground = new SolidColorBrush(Color.FromRgb(255, 230, 230));
         private static readonly Brush AddedBackground = new SolidColorBrush(Color.FromRgb(232, 248, 237));
 
+        private DiffViewModel diffViewModel;
+        private int currentDiffBlockIndex = -1;
+
         public DecodedBundleViewerWindow(
             DecodedBundleListItem decodedFile,
             SourceSnapshotState sourceSnapshotState,
-            string sourceHeader,
             string sourceContent,
-            string decodedHeader,
             string statusText,
             Action<DecodedBundleViewerWindow> applyRequested)
         {
@@ -36,8 +40,10 @@ namespace ZCodeBundler
             OpenedSourceContent = sourceSnapshotState == SourceSnapshotState.Exists ? sourceContent : string.Empty;
             ApplyRequested = applyRequested;
 
-            Title = $"Decoded diff - {decodedFile.FileName}";
-            Refresh(sourceHeader, sourceContent, statusText, decodedFile.Status);
+            var titleFileName = string.IsNullOrWhiteSpace(decodedFile.FileName) ? decodedFile.SourceFileName : decodedFile.FileName;
+            Title = $"ZDecoder - {titleFileName}";
+
+            Refresh(sourceContent, statusText, decodedFile.Status);
         }
 
         public DecodedBundleListItem DecodedFile { get; }
@@ -46,18 +52,72 @@ namespace ZCodeBundler
         public DecodedSourceStatus CurrentStatus { get; private set; }
         private Action<DecodedBundleViewerWindow> ApplyRequested { get; }
 
-        public void Refresh(string sourceHeader, string sourceContent, string statusText, DecodedSourceStatus status)
+        public void Refresh(string sourceContent, string statusText, DecodedSourceStatus status)
         {
             CurrentStatus = status;
             StatusTextBlock.Text = statusText;
             TargetPathTextBlock.Text = DecodedFile.Path;
-            DataContext = new DiffViewModel(BuildDiffRows(sourceContent, DecodedFile.Content));
+
+            diffViewModel = new DiffViewModel(BuildDiffRows(sourceContent, DecodedFile.Content));
+            currentDiffBlockIndex = -1;
+            DataContext = diffViewModel;
+
             ApplyChangesButton.IsEnabled = status is DecodedSourceStatus.Different or DecodedSourceStatus.Missing or DecodedSourceStatus.DuplicateTarget;
+            UpdateDiffNavigationButtons();
         }
 
         private void ApplyChangesButton_Click(object sender, RoutedEventArgs e)
         {
             ApplyRequested(this);
+        }
+
+        private void PreviousDiffButton_Click(object sender, RoutedEventArgs e)
+        {
+            JumpToDiff(-1);
+        }
+
+        private void NextDiffButton_Click(object sender, RoutedEventArgs e)
+        {
+            JumpToDiff(1);
+        }
+
+        private void JumpToDiff(int direction)
+        {
+            if (diffViewModel == null || diffViewModel.DiffBlockStartIndexes.Count == 0)
+                return;
+
+            if (currentDiffBlockIndex < 0)
+            {
+                currentDiffBlockIndex = direction > 0 ? 0 : diffViewModel.DiffBlockStartIndexes.Count - 1;
+            }
+            else
+            {
+                currentDiffBlockIndex = (currentDiffBlockIndex + direction + diffViewModel.DiffBlockStartIndexes.Count) % diffViewModel.DiffBlockStartIndexes.Count;
+            }
+
+            var rowIndex = diffViewModel.DiffBlockStartIndexes[currentDiffBlockIndex];
+            SelectAndScrollToRow(rowIndex);
+        }
+
+        private void SelectAndScrollToRow(int rowIndex)
+        {
+            if (rowIndex < 0 || rowIndex >= DiffRowsDataGrid.Items.Count)
+                return;
+
+            DiffRowsDataGrid.SelectedIndex = rowIndex;
+            DiffRowsDataGrid.ScrollIntoView(DiffRowsDataGrid.Items[rowIndex]);
+            DiffRowsDataGrid.UpdateLayout();
+
+            var row = DiffRowsDataGrid.ItemContainerGenerator.ContainerFromIndex(rowIndex) as DataGridRow;
+            row?.BringIntoView();
+            DiffRowsDataGrid.Focus();
+        }
+
+        private void UpdateDiffNavigationButtons()
+        {
+            var hasDiffBlocks = diffViewModel != null && diffViewModel.DiffBlockStartIndexes.Count > 0;
+            PreviousDiffButton.IsEnabled = hasDiffBlocks;
+            NextDiffButton.IsEnabled = hasDiffBlocks;
         }
 
         private static List<DiffRow> BuildDiffRows(string sourceContent, string decodedContent)
@@ -66,15 +126,13 @@ namespace ZCodeBundler
             var decodedLines = SplitLines(decodedContent);
 
             if (string.Equals(sourceContent, decodedContent, StringComparison.Ordinal))
-            {
-                if (sourceLines.Count > MaxAlignedDiffLineCount)
-                    return BuildLargeUnchangedRows(sourceLines.Count);
-
                 return BuildMatchingRows(sourceLines);
-            }
+
+            if (HasOnlyLineEndingDifferences(sourceContent, decodedContent))
+                return BuildLineEndingOnlyDifferenceRows(sourceContent, decodedContent, sourceLines, decodedLines);
 
             if (sourceLines.Count + decodedLines.Count > MaxAlignedDiffLineCount)
-                return BuildLargeDiffOmittedRows(sourceLines.Count, decodedLines.Count);
+                return BuildLargeDiffPreviewRows(sourceLines.Count, decodedLines.Count);
 
             var operations = BuildDiffOperations(sourceLines, decodedLines);
             var rows = new List<DiffRow>();
@@ -141,25 +199,36 @@ namespace ZCodeBundler
             return rows;
         }
 
-        private static List<DiffRow> BuildLargeUnchangedRows(int lineCount)
+        private static List<DiffRow> BuildLineEndingOnlyDifferenceRows(
+            string sourceContent,
+            string decodedContent,
+            List<string> sourceLines,
+            List<string> decodedLines)
         {
-            return new List<DiffRow>
+            var rows = new List<DiffRow>
             {
-                DiffRow.Unchanged(
+                DiffRow.Changed(
                     0,
-                    $"Unchanged file preview omitted to keep the viewer responsive. Source lines: {lineCount}.",
+                    $"Line endings differ: source uses {GetLineEndingDescription(sourceContent)}.",
                     0,
-                    "Decoded content matches source content exactly.")
+                    $"Decoded uses {GetLineEndingDescription(decodedContent)}. Applying writes decoded line endings exactly.")
             };
+
+            var matchingLineCount = Math.Min(sourceLines.Count, decodedLines.Count);
+
+            for (var index = 0; index < matchingLineCount; index++)
+                rows.Add(DiffRow.Unchanged(index + 1, sourceLines[index], index + 1, decodedLines[index]));
+
+            return rows;
         }
 
-        private static List<DiffRow> BuildLargeDiffOmittedRows(int sourceLineCount, int decodedLineCount)
+        private static List<DiffRow> BuildLargeDiffPreviewRows(int sourceLineCount, int decodedLineCount)
         {
             return new List<DiffRow>
             {
                 DiffRow.Changed(
                     0,
-                    $"Aligned diff omitted to keep the viewer responsive. Source lines: {sourceLineCount}.",
+                    $"Diff is too large to display safely/usefully. Source lines: {sourceLineCount}.",
                     0,
                     $"Decoded lines: {decodedLineCount}. Apply still writes decoded bundle content exactly.")
             };
@@ -173,7 +242,6 @@ namespace ZCodeBundler
             var offset = maxEditCount + 1;
             var vector = new int[(maxEditCount * 2) + 3];
             var trace = new List<int[]>();
-
             vector[offset + 1] = 0;
 
             for (var editCount = 0; editCount <= maxEditCount; editCount++)
@@ -184,8 +252,7 @@ namespace ZCodeBundler
                 {
                     int sourceIndex;
 
-                    if (diagonal == -editCount
-                        || diagonal != editCount && vector[offset + diagonal - 1] < vector[offset + diagonal + 1])
+                    if (diagonal == -editCount || diagonal != editCount && vector[offset + diagonal - 1] < vector[offset + diagonal + 1])
                     {
                         sourceIndex = vector[offset + diagonal + 1];
                     }
@@ -196,9 +263,7 @@ namespace ZCodeBundler
 
                     var decodedIndex = sourceIndex - diagonal;
 
-                    while (sourceIndex < sourceCount
-                        && decodedIndex < decodedCount
-                        && sourceLines[sourceIndex] == decodedLines[decodedIndex])
+                    while (sourceIndex < sourceCount && decodedIndex < decodedCount && sourceLines[sourceIndex] == decodedLines[decodedIndex])
                     {
                         sourceIndex++;
                         decodedIndex++;
@@ -278,11 +343,59 @@ namespace ZCodeBundler
             if (content.Length == 0)
                 return new List<string>();
 
-            return content
-                .Replace("\r\n", "\n")
-                .Replace('\r', '\n')
+            return NormalizeLineEndings(content)
                 .Split('\n')
                 .ToList();
+        }
+
+        private static bool HasOnlyLineEndingDifferences(string sourceContent, string decodedContent)
+        {
+            return string.Equals(NormalizeLineEndings(sourceContent), NormalizeLineEndings(decodedContent), StringComparison.Ordinal);
+        }
+
+        private static string NormalizeLineEndings(string content)
+        {
+            return content
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n');
+        }
+
+        private static string GetLineEndingDescription(string content)
+        {
+            var hasCrLf = false;
+            var hasLf = false;
+            var hasCr = false;
+
+            for (var index = 0; index < content.Length; index++)
+            {
+                if (content[index] == '\r')
+                {
+                    if (index + 1 < content.Length && content[index + 1] == '\n')
+                    {
+                        hasCrLf = true;
+                        index++;
+                    }
+                    else
+                    {
+                        hasCr = true;
+                    }
+
+                    continue;
+                }
+
+                if (content[index] == '\n')
+                    hasLf = true;
+            }
+
+            var lineEndingNames = new List<string>();
+            if (hasCrLf)
+                lineEndingNames.Add("CRLF");
+            if (hasLf)
+                lineEndingNames.Add("LF");
+            if (hasCr)
+                lineEndingNames.Add("CR");
+
+            return lineEndingNames.Count == 0 ? "no line endings" : string.Join(" + ", lineEndingNames);
         }
 
         public sealed class DiffViewModel
@@ -290,9 +403,27 @@ namespace ZCodeBundler
             public DiffViewModel(List<DiffRow> diffRows)
             {
                 DiffRows = diffRows;
+                DiffBlockStartIndexes = BuildDiffBlockStartIndexes(diffRows);
             }
 
             public List<DiffRow> DiffRows { get; }
+            public List<int> DiffBlockStartIndexes { get; }
+
+            private static List<int> BuildDiffBlockStartIndexes(List<DiffRow> diffRows)
+            {
+                var diffBlockStartIndexes = new List<int>();
+
+                for (var index = 0; index < diffRows.Count; index++)
+                {
+                    if (!diffRows[index].IsDifferent)
+                        continue;
+
+                    if (index == 0 || !diffRows[index - 1].IsDifferent)
+                        diffBlockStartIndexes.Add(index);
+                }
+
+                return diffBlockStartIndexes;
+            }
         }
 
         public sealed class DiffRow
@@ -303,7 +434,8 @@ namespace ZCodeBundler
                 string decodedLineNumberText,
                 string decodedText,
                 Brush sourceBackground,
-                Brush decodedBackground)
+                Brush decodedBackground,
+                bool isDifferent)
             {
                 SourceLineNumberText = sourceLineNumberText;
                 SourceText = sourceText;
@@ -311,6 +443,7 @@ namespace ZCodeBundler
                 DecodedText = decodedText;
                 SourceBackground = sourceBackground;
                 DecodedBackground = decodedBackground;
+                IsDifferent = isDifferent;
             }
 
             public string SourceLineNumberText { get; }
@@ -319,6 +452,7 @@ namespace ZCodeBundler
             public string DecodedText { get; }
             public Brush SourceBackground { get; }
             public Brush DecodedBackground { get; }
+            public bool IsDifferent { get; }
 
             public static DiffRow Unchanged(int sourceLineNumber, string sourceText, int decodedLineNumber, string decodedText)
             {
@@ -328,7 +462,8 @@ namespace ZCodeBundler
                     decodedLineNumber > 0 ? decodedLineNumber.ToString() : string.Empty,
                     decodedText,
                     NormalBackground,
-                    NormalBackground);
+                    NormalBackground,
+                    false);
             }
 
             public static DiffRow Changed(int sourceLineNumber, string sourceText, int decodedLineNumber, string decodedText)
@@ -339,17 +474,18 @@ namespace ZCodeBundler
                     decodedLineNumber > 0 ? decodedLineNumber.ToString() : string.Empty,
                     decodedText,
                     RemovedBackground,
-                    AddedBackground);
+                    AddedBackground,
+                    true);
             }
 
             public static DiffRow Removed(int sourceLineNumber, string sourceText)
             {
-                return new DiffRow(sourceLineNumber.ToString(), sourceText, string.Empty, string.Empty, RemovedBackground, NormalBackground);
+                return new DiffRow(sourceLineNumber.ToString(), sourceText, string.Empty, string.Empty, RemovedBackground, NormalBackground, true);
             }
 
             public static DiffRow Added(int decodedLineNumber, string decodedText)
             {
-                return new DiffRow(string.Empty, string.Empty, decodedLineNumber.ToString(), decodedText, NormalBackground, AddedBackground);
+                return new DiffRow(string.Empty, string.Empty, decodedLineNumber.ToString(), decodedText, NormalBackground, AddedBackground, true);
             }
         }
 

@@ -4,6 +4,78 @@
              xmlns:local="clr-namespace:ZCodeBundler"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-         
+        <SolidColorBrush x:Key="ColorWindowBackground" Color="#F5F6F8" />
+        <SolidColorBrush x:Key="ColorSurface" Color="White" />
+        <SolidColorBrush x:Key="ColorSurfaceHover" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="ColorSurfaceSelected" Color="#EAF2FF" />
+        <SolidColorBrush x:Key="ColorBorderDefault" Color="#C8CDD6" />
+        <SolidColorBrush x:Key="ColorBorderHover" Color="#7AA7E8" />
+        <SolidColorBrush x:Key="ColorAccent" Color="#256D9B" />
+        <SolidColorBrush x:Key="ColorTextMuted" Color="#666666" />
+        <SolidColorBrush x:Key="ColorSeparator" Color="#E1E5EC" />
+        <SolidColorBrush x:Key="ColorAlternateRow" Color="#F7F9FC" />
+        <SolidColorBrush x:Key="ListRowHoverBackground" Color="#DDEEFF" />
+        <SolidColorBrush x:Key="ListRowSelectedBackground" Color="#BFD8FF" />
+        <SolidColorBrush x:Key="ListRowSelectedForeground" Color="#1F1F1F" />
+        <Thickness x:Key="WindowPadding" Left="8" Top="8" Right="8" Bottom="8" />
+
+        <Style TargetType="{x:Type ScrollBar}">
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Vertical">
+                    <Setter Property="Width" Value="8" />
+                </Trigger>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Height" Value="8" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="CompactActionButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="28" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="{StaticResource ColorSurface}" />
+            <Setter Property="BorderBrush" Value="{StaticResource ColorBorderDefault}" />
+            <Setter Property="Foreground" Value="#333333" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="5"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="{StaticResource ColorSurfaceHover}" />
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="{StaticResource ColorBorderHover}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="{StaticResource ColorAccent}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="{StaticResource ColorSurfaceSelected}" />
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="{StaticResource ColorAccent}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.55" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Application.Resources>
 </Application>

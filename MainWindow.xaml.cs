@@ -36,6 +36,7 @@ namespace ZCodeBundler
             UpdateTotalFilesStatus();
             ShowDecodedBundleFiles(new List<DecodedBundleListItem>());
             SetDecodedPanelExpanded(false);
+            UpdateAutoFillListColumns();
         }
 
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
@@ -474,19 +475,100 @@ namespace ZCodeBundler
 
         private void SetDecodedPanelExpanded(bool isExpanded)
         {
-            _isDecodedPanelExpanded = isExpanded;
+            if (!isExpanded)
+            {
+                HideDecodedPanel();
+                return;
+            }
 
-            DecodedPanelColumn.Width = isExpanded ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
-            DecodedPanelSplitterColumn.Width = isExpanded ? new GridLength(8) : new GridLength(0);
-            DecodedPanelBorder.Visibility = isExpanded ? Visibility.Visible : Visibility.Collapsed;
-            DecodedPanelGridSplitter.Visibility = isExpanded ? Visibility.Visible : Visibility.Collapsed;
-            ToggleDecodedPanelButton.Content = isExpanded ? "◀" : "▶";
+            if (_isDecodedPanelExpanded)
+            {
+                ShowDecodedPanelPreservingWidth();
+                return;
+            }
+
+            ResetDecodedPanelWidth();
+        }
+
+        private void ResetDecodedPanelWidth()
+        {
+            _isDecodedPanelExpanded = true;
+            BundlerPanelColumn.Width = new GridLength(1, GridUnitType.Star);
+            DecodedPanelColumn.Width = new GridLength(1, GridUnitType.Star);
+            DecodedPanelSplitterColumn.Width = new GridLength(8);
+            DecodedPanelBorder.Visibility = Visibility.Visible;
+            DecodedPanelGridSplitter.Visibility = Visibility.Visible;
+            ToggleDecodedPanelButton.Content = "◀";
+            UpdateAutoFillListColumns();
+        }
+
+        private void ShowDecodedPanelPreservingWidth()
+        {
+            _isDecodedPanelExpanded = true;
+            DecodedPanelSplitterColumn.Width = new GridLength(8);
+            DecodedPanelBorder.Visibility = Visibility.Visible;
+            DecodedPanelGridSplitter.Visibility = Visibility.Visible;
+            ToggleDecodedPanelButton.Content = "◀";
+            UpdateAutoFillListColumns();
+        }
+
+        private void HideDecodedPanel()
+        {
+            _isDecodedPanelExpanded = false;
+            BundlerPanelColumn.Width = new GridLength(1, GridUnitType.Star);
+            DecodedPanelColumn.Width = new GridLength(0);
+            DecodedPanelSplitterColumn.Width = new GridLength(0);
+            DecodedPanelBorder.Visibility = Visibility.Collapsed;
+            DecodedPanelGridSplitter.Visibility = Visibility.Collapsed;
+            ToggleDecodedPanelButton.Content = "▶";
+            UpdateAutoFillListColumns();
+        }
+
+        private void DecodedPanelGridSplitter_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            ResetDecodedPanelWidth();
         }
 
         private void ListDropGridSplitter_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
             SelectedFilesAreaRow.Height = new GridLength(1, GridUnitType.Star);
             DropAreaRow.Height = new GridLength(1, GridUnitType.Star);
+        }
+
+        private void MainListView_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            UpdateAutoFillListColumns();
+        }
+
+        private void UpdateAutoFillListColumns()
+        {
+            AutoFillLastColumn(SelectedFilesListView, SelectedFilesFileColumn, 220, SelectedFilesCodeTypeColumn);
+            AutoFillLastColumn(
+                DecodedBundleFilesListView,
+                DecodedBundleColumn,
+                180,
+                DecodedStatusColumn,
+                DecodedCodeTypeColumn,
+                DecodedFileColumn,
+                DecodedModifiedColumn);
+        }
+
+        private static void AutoFillLastColumn(
+            System.Windows.Controls.ListView listView,
+            System.Windows.Controls.GridViewColumn lastColumn,
+            double minimumWidth,
+            params System.Windows.Controls.GridViewColumn[] precedingColumns)
+        {
+            const double widthReserve = 32;
+            if (listView.ActualWidth <= 0)
+                return;
+
+            var usedWidth = widthReserve;
+            foreach (var column in precedingColumns)
+                usedWidth += column.Width;
+
+            var remainingWidth = listView.ActualWidth - usedWidth;
+            lastColumn.Width = Math.Max(minimumWidth, remainingWidth);
         }
 
         private void FolderDropArea_DragEnter(object sender, DragEventArgs e)
@@ -616,6 +698,7 @@ namespace ZCodeBundler
             DecodedBundleFilesListView.ItemsSource = null;
             DecodedBundleFilesListView.ItemsSource = _decodedFiles;
             DecodedBundleFilesCountTextBlock.Text = $"{_decodedFiles.Count} files";
+            UpdateAutoFillListColumns();
         }
 
         private void UpdateDecodedPanelButtons()
@@ -687,7 +770,7 @@ namespace ZCodeBundler
                 statusDetail = string.Empty;
                 return DecodedSourceStatus.Missing;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or PathTooLongException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or PathTooLongException or NotSupportedException)
             {
                 statusDetail = ex.Message;
                 return DecodedSourceStatus.SourceReadError;
@@ -739,13 +822,11 @@ namespace ZCodeBundler
                 return;
             }
 
-            var sourceContent = GetSourceContentForViewer(decodedFile, out var sourceHeader, out var sourceState);
+            var sourceContent = GetSourceContentForViewer(decodedFile, out var sourceState);
             var viewer = new DecodedBundleViewerWindow(
                 decodedFile,
                 sourceState,
-                sourceHeader,
                 sourceContent,
-                "Decoded bundle content",
                 GetViewerStatusText(decodedFile),
                 ApplyDecodedViewerChanges)
             {
@@ -771,16 +852,35 @@ namespace ZCodeBundler
             UpdateDecodedPanelButtons();
             RefreshDecodedViewer(viewer);
 
+            var currentSourceContent = GetSourceContentForViewer(decodedFile, out var currentSourceState);
+
             if (decodedFile.Status == DecodedSourceStatus.DuplicateTarget)
             {
                 ShowDuplicateTargetWarning();
                 return;
             }
 
+            if (decodedFile.Status == DecodedSourceStatus.Same)
+            {
+                ShowInformationMessage("Apply decoded changes", "The source file already matches the decoded bundle content. No changes were written.");
+                return;
+            }
+
+            if (decodedFile.Status == DecodedSourceStatus.InvalidPath)
+            {
+                ShowErrorMessage("Cannot apply decoded file", GetViewerStatusText(decodedFile));
+                return;
+            }
+
+            if (decodedFile.Status == DecodedSourceStatus.SourceReadError)
+            {
+                ShowErrorMessage("Cannot apply decoded file", GetViewerStatusText(decodedFile));
+                return;
+            }
+
             if (decodedFile.Status is not (DecodedSourceStatus.Different or DecodedSourceStatus.Missing))
                 return;
 
-            var currentSourceContent = GetSourceContentForViewer(decodedFile, out _, out var currentSourceState);
             var confirmationMessage = GetViewerApplyConfirmationMessage(viewer, currentSourceState, currentSourceContent);
             var confirmed = new APIOfDialogs.DialogMsgBoxAC(
                 "Apply decoded changes",
@@ -862,8 +962,8 @@ namespace ZCodeBundler
 
         private void RefreshDecodedViewer(DecodedBundleViewerWindow viewer)
         {
-            var sourceContent = GetSourceContentForViewer(viewer.DecodedFile, out var sourceHeader, out _);
-            viewer.Refresh(sourceHeader, sourceContent, GetViewerStatusText(viewer.DecodedFile), viewer.DecodedFile.Status);
+            var sourceContent = GetSourceContentForViewer(viewer.DecodedFile, out _);
+            viewer.Refresh(sourceContent, GetViewerStatusText(viewer.DecodedFile), viewer.DecodedFile.Status);
         }
 
         private void CloseAllDecodedViewers()
@@ -890,20 +990,17 @@ namespace ZCodeBundler
 
         private static string GetDecodedViewerKey(DecodedBundleListItem decodedFile)
         {
-            return decodedFile.BundlePath + "\u001F" + decodedFile.Path + "\u001F" + decodedFile.DecodedItemIndex;
+            return decodedFile.BundlePath + "\u001F" + decodedFile.Path;
         }
 
         private static string GetSourceContentForViewer(
             DecodedBundleListItem decodedFile,
-            out string sourceHeader,
             out DecodedBundleViewerWindow.SourceSnapshotState sourceState)
         {
-            sourceHeader = "Source / current file";
             sourceState = DecodedBundleViewerWindow.SourceSnapshotState.Exists;
 
             if (!TryGetNormalizedTargetPath(decodedFile.Path, out var normalizedPath))
             {
-                sourceHeader = "Invalid source path";
                 sourceState = DecodedBundleViewerWindow.SourceSnapshotState.InvalidPath;
                 return "PATH is not a valid absolute source path.";
             }
@@ -915,13 +1012,11 @@ namespace ZCodeBundler
             }
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
             {
-                sourceHeader = "Missing source file";
                 sourceState = DecodedBundleViewerWindow.SourceSnapshotState.Missing;
-                return "Source file does not exist.";
+                return string.Empty;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or PathTooLongException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or PathTooLongException or NotSupportedException)
             {
-                sourceHeader = "Source read error";
                 sourceState = DecodedBundleViewerWindow.SourceSnapshotState.SourceReadError;
                 return $"Source file could not be read.\n{ex.Message}";
             }
@@ -1098,6 +1193,7 @@ namespace ZCodeBundler
         {
             SelectedFilesListView.ItemsSource = null;
             SelectedFilesListView.ItemsSource = _selectedFiles;
+            UpdateAutoFillListColumns();
         }
 
         private void UpdateFileActionButtons()

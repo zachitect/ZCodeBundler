@@ -20,6 +20,7 @@ public sealed class DecodedBundleListItem
     public string FileName { get; }
     public string Path { get; }
     public string FileType { get; }
+    public string FileTypeText => string.IsNullOrWhiteSpace(FileType) ? "(unknown)" : FileType;
     public DateTime? DateModified { get; }
     public string Content { get; }
     public DecodedSourceStatus Status { get; set; }
