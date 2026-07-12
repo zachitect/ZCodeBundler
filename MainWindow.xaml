@@ -329,17 +329,16 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="8" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="8" />
-                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="8" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="Enable Unknown File Types" VerticalAlignment="Center" Foreground="{StaticResource ColorTextMuted}" Margin="0,0,6,0" />
                             <ToggleButton x:Name="AskAboutUnknownFileTypesCheckBox" Style="{StaticResource SwitchToggleButtonStyle}" IsChecked="False" />
                         </StackPanel>
-                        <StackPanel Grid.Column="4" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button Grid.Column="2" Content="View Prompt" Style="{StaticResource CompactActionButtonStyle}" Click="ViewPromptButton_Click" />
+                        <StackPanel Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <TextBlock Text="Enable Tree Selection" VerticalAlignment="Center" Foreground="{StaticResource ColorTextMuted}" Margin="0,0,6,0" />
                             <ToggleButton x:Name="UseTreeSelectionCheckBox" Style="{StaticResource SwitchToggleButtonStyle}" IsChecked="False" />
                         </StackPanel>
@@ -436,4 +435,3 @@
         </Grid>
     </Border>
 </Window>
-

@@ -18,7 +18,7 @@ namespace ZCodeBundler
             SourceReadError
         }
 
-        private const int MaxAlignedDiffLineCount = 5000;
+        private const int MaxAlignedDiffLineCount = 1000;
         private static readonly Brush NormalBackground = Brushes.Transparent;
         private static readonly Brush RemovedBackground = new SolidColorBrush(Color.FromRgb(255, 230, 230));
         private static readonly Brush AddedBackground = new SolidColorBrush(Color.FromRgb(232, 248, 237));

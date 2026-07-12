@@ -1,4 +1,5 @@
 ﻿using System.IO;
+using System.Text;
 
 namespace ZCodeBundler.Bundling;
 
@@ -202,8 +203,11 @@ public sealed class FileTreeScanner
 
         foreach (var childDirectory in GetDirectories(directory))
         {
-            if (SkippedFolderNames.Contains(childDirectory.Name))
+            if (SkippedFolderNames.Contains(childDirectory.Name)
+                || childDirectory.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            {
                 continue;
+            }
 
             var childFullPath = Path.Combine(directory.FullName, childDirectory.Name);
 
@@ -322,23 +326,28 @@ public sealed class FileTreeScanner
 
     private static bool IsProbablyBinary(FileInfo file)
     {
-        const int sampleSize = 4096;
+        var strictUtf8 = new UTF8Encoding(false, true);
 
         try
         {
-            using var stream = file.OpenRead();
+            using var reader = new StreamReader(file.FullName, strictUtf8, false);
+            var buffer = new char[4096];
+            int charactersRead;
 
-            var length = (int)Math.Min(sampleSize, stream.Length);
-            var buffer = new byte[length];
-            var bytesRead = stream.Read(buffer, 0, length);
-
-            for (var i = 0; i < bytesRead; i++)
+            while ((charactersRead = reader.Read(buffer, 0, buffer.Length)) > 0)
             {
-                if (buffer[i] == 0)
-                    return true;
+                for (var index = 0; index < charactersRead; index++)
+                {
+                    if (buffer[index] == '\0')
+                        return true;
+                }
             }
 
             return false;
+        }
+        catch (DecoderFallbackException)
+        {
+            return true;
         }
         catch (IOException)
         {

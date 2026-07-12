@@ -21,6 +21,49 @@ namespace ZCodeBundler
         private readonly ZCodeBundleReader _bundleReader = new();
         private bool _isDecodedPanelExpanded;
 
+        private const string EmbeddedPrompt = """
+FINAL OUTPUT CONTRACT
+
+This contract applies only when the user provides an input .zcb.txt bundle.
+
+If no input .zcb.txt bundle was provided, do not create a .zcb.txt output file.
+
+The input .zcb.txt bundle contains file blocks. For each file you need to output, use only:
+- PATH from the matching input file block
+- the original source content from the matching input file block
+
+Do not treat bundle headers, metadata lines, or delimiter lines as source code.
+
+If no files need to be output, create no output file.
+
+If one or more files need to be output, create exactly one plain-text output file with extension:
+.zcb.txt
+
+The output .zcb.txt file must contain only files that need to be output.
+Do not include unchanged files.
+Do not include the full input bundle.
+
+Each output file must use this exact block format:
+--- ZCODEBUNDLE_FILE_START ---
+PATH: 
+--- ZCODEBUNDLE_CONTENT_START ---
+--- ZCODEBUNDLE_FILE_END ---
+
+Rules:
+- Use one block per output file.
+- PATH must be copied exactly from the matching input file block.
+- Do not invent, guess, shorten, normalize, relativize, rename, or alter PATH.
+- The content section must contain the complete final file content for that PATH.
+- Do not output snippets, partial files, diffs, patches, ellipses, or “unchanged” placeholders.
+- Do not include CONTENT_LENGTH.
+- Do not include FILE_NAME, TYPE, DATE_MODIFIED, FILE_COUNT, BUNDLE_TITLE, ZCODEBUNDLE_VERSION, ZCODEBUNDLE_OUTPUT_VERSION, ROOT_PATH, GENERATED_AT, or any header.
+- Do not wrap the output in Markdown or code fences.
+- Do not add explanations, summaries, comments, or text before, between, or after file blocks.
+- Preserve the final file content exactly as source text. Do not let the tool, script, template engine, serializer, or host language reinterpret escape sequences, string/template literals, regexes, quotes, braces, backslashes, tabs, newlines, or other language-specific syntax. For example, if the intended file content contains the two characters backslash+n, output backslash+n, not an actual newline.
+- Before delivering the output file, inspect the generated .zcb.txt itself, not only the generation script or plan. Verify that each changed file block contains the intended final source text and that no string/template literal, escape sequence, delimiter, indentation, or line break was accidentally transformed by output generation.
+- If the complete final file content would contain a standalone line exactly equal to --- ZCODEBUNDLE_FILE_END ---, do not create a .zcb.txt output file.
+""";
+
         public MainWindow()
         {
             InitializeComponent();
@@ -184,6 +227,69 @@ namespace ZCodeBundler
             SetDecodedPanelExpanded(!_isDecodedPanelExpanded);
         }
 
+        private void ViewPromptButton_Click(object sender, RoutedEventArgs e)
+        {
+            var promptTextBox = new System.Windows.Controls.TextBox
+            {
+                Text = EmbeddedPrompt,
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                AcceptsTab = true,
+                TextWrapping = TextWrapping.NoWrap,
+                HorizontalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
+                FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                FontSize = 13,
+                Padding = new Thickness(10)
+            };
+
+            var copyButton = new System.Windows.Controls.Button
+            {
+                Content = "Copy All",
+                MinWidth = 90,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+
+            copyButton.Click += (_, _) => Clipboard.SetText(EmbeddedPrompt);
+
+            var closeButton = new System.Windows.Controls.Button
+            {
+                Content = "Close",
+                MinWidth = 90,
+                IsCancel = true
+            };
+
+            var buttonPanel = new System.Windows.Controls.StackPanel
+            {
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+
+            buttonPanel.Children.Add(copyButton);
+            buttonPanel.Children.Add(closeButton);
+
+            var layout = new System.Windows.Controls.DockPanel { Margin = new Thickness(12) };
+            System.Windows.Controls.DockPanel.SetDock(buttonPanel, System.Windows.Controls.Dock.Bottom);
+            layout.Children.Add(buttonPanel);
+            layout.Children.Add(promptTextBox);
+
+            var window = new Window
+            {
+                Title = "Embedded Prompt",
+                Owner = this,
+                Width = 800,
+                Height = 600,
+                MinWidth = 500,
+                MinHeight = 350,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Content = layout
+            };
+
+            closeButton.Click += (_, _) => window.Close();
+            window.ShowDialog();
+        }
+
         private void AddZcbTxtButton_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new OpenFileDialog
@@ -316,6 +422,15 @@ namespace ZCodeBundler
                 return;
             }
 
+            var filesToApply = differentFiles.Concat(missingFiles).ToList();
+            var sourceSnapshots = new Dictionary<DecodedBundleListItem, SourceSnapshot>();
+
+            foreach (var decodedFile in filesToApply)
+            {
+                var sourceContent = GetSourceContentForViewer(decodedFile, out var sourceState);
+                sourceSnapshots[decodedFile] = new SourceSnapshot(sourceState, sourceContent);
+            }
+
             var confirmationMessage = BuildApplyConfirmationMessage(decodedFiles, differentFiles, missingFiles);
             var confirmed = new APIOfDialogs.DialogMsgBoxAC(
                 confirmationTitle,
@@ -331,12 +446,11 @@ namespace ZCodeBundler
                 return;
             }
 
-            var filesToApply = differentFiles.Concat(missingFiles).ToList();
             var appliedCount = 0;
 
             foreach (var decodedFile in filesToApply)
             {
-                if (!TryWriteDecodedContent(decodedFile, out var errorMessage))
+                if (!TryWriteDecodedContent(decodedFile, sourceSnapshots[decodedFile], out var errorMessage))
                 {
                     RefreshDecodedFileStatuses(_decodedFiles);
                     RefreshDecodedBundleFilesList();
@@ -401,7 +515,7 @@ namespace ZCodeBundler
             builder.AppendLine();
         }
 
-        private static bool TryWriteDecodedContent(DecodedBundleListItem decodedFile, out string errorMessage)
+        private static bool TryWriteDecodedContent(DecodedBundleListItem decodedFile, SourceSnapshot expectedSource, out string errorMessage)
         {
             errorMessage = string.Empty;
 
@@ -413,39 +527,74 @@ namespace ZCodeBundler
 
             try
             {
-                var targetExists = File.Exists(normalizedPath);
-                var encoding = targetExists && HasUtf8Bom(normalizedPath)
-                    ? new UTF8Encoding(true)
-                    : new UTF8Encoding(false);
+                var parentFolderPath = Path.GetDirectoryName(normalizedPath);
 
-                if (!targetExists)
+                if (expectedSource.State == DecodedBundleViewerWindow.SourceSnapshotState.Missing)
                 {
-                    var parentFolderPath = Path.GetDirectoryName(normalizedPath);
-
                     if (!string.IsNullOrWhiteSpace(parentFolderPath))
                         Directory.CreateDirectory(parentFolderPath);
+
+                    using var newStream = new FileStream(normalizedPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+                    using var newWriter = new StreamWriter(newStream, new UTF8Encoding(false));
+                    newWriter.Write(decodedFile.Content);
+                    return true;
                 }
 
-                File.WriteAllText(normalizedPath, decodedFile.Content, encoding);
+                if (expectedSource.State != DecodedBundleViewerWindow.SourceSnapshotState.Exists)
+                {
+                    errorMessage = $"The source file is not in a writable state:\n{normalizedPath}";
+                    return false;
+                }
+
+                using var stream = new FileStream(normalizedPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+                var hasUtf8Bom = HasUtf8Bom(stream);
+                var currentContent = ReadUtf8Text(stream);
+
+                if (!string.Equals(currentContent, expectedSource.Content, StringComparison.Ordinal))
+                {
+                    errorMessage = $"The source file changed after confirmation and was not overwritten:\n{normalizedPath}";
+                    return false;
+                }
+
+                stream.Position = 0;
+                stream.SetLength(0);
+
+                using var writer = new StreamWriter(stream, new UTF8Encoding(hasUtf8Bom), leaveOpen: true);
+                writer.Write(decodedFile.Content);
                 return true;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or DirectoryNotFoundException or PathTooLongException or NotSupportedException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or DirectoryNotFoundException or PathTooLongException or NotSupportedException or DecoderFallbackException)
             {
                 errorMessage = $"Could not write decoded content to:\n{normalizedPath}\n\n{ex.Message}";
                 return false;
             }
         }
 
-        private static bool HasUtf8Bom(string path)
+        private static string ReadUtf8Text(Stream stream)
         {
-            using var stream = File.OpenRead(path);
+            stream.Position = 0;
+            var strictUtf8 = new UTF8Encoding(false, true);
 
+            using var reader = new StreamReader(stream, strictUtf8, false, leaveOpen: true);
+            var content = reader.ReadToEnd();
+
+            if (content.Contains('\0'))
+                throw new DecoderFallbackException("The source file is not UTF-8 text.");
+
+            return content.StartsWith('\uFEFF') ? content[1..] : content;
+        }
+
+        private static bool HasUtf8Bom(Stream stream)
+        {
             if (stream.Length < 3)
                 return false;
 
-            return stream.ReadByte() == 0xEF
+            stream.Position = 0;
+            var hasBom = stream.ReadByte() == 0xEF
                 && stream.ReadByte() == 0xBB
                 && stream.ReadByte() == 0xBF;
+            stream.Position = 0;
+            return hasBom;
         }
 
         private void ShowDuplicateTargetWarning()
@@ -757,8 +906,8 @@ namespace ZCodeBundler
 
             try
             {
-                using var reader = new StreamReader(normalizedPath, Encoding.UTF8, true);
-                var sourceContent = reader.ReadToEnd();
+                using var stream = File.OpenRead(normalizedPath);
+                var sourceContent = ReadUtf8Text(stream);
 
                 statusDetail = string.Empty;
                 return string.Equals(sourceContent, decodedFile.Content, StringComparison.Ordinal)
@@ -770,7 +919,7 @@ namespace ZCodeBundler
                 statusDetail = string.Empty;
                 return DecodedSourceStatus.Missing;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or PathTooLongException or NotSupportedException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or PathTooLongException or NotSupportedException or DecoderFallbackException)
             {
                 statusDetail = ex.Message;
                 return DecodedSourceStatus.SourceReadError;
@@ -897,7 +1046,7 @@ namespace ZCodeBundler
                 return;
             }
 
-            if (!TryWriteDecodedContent(decodedFile, out var errorMessage))
+            if (!TryWriteDecodedContent(decodedFile, new SourceSnapshot(currentSourceState, currentSourceContent), out var errorMessage))
             {
                 RefreshDecodedFileStatuses(_decodedFiles);
                 RefreshDecodedBundleFilesList();
@@ -1007,15 +1156,15 @@ namespace ZCodeBundler
 
             try
             {
-                using var reader = new StreamReader(normalizedPath, Encoding.UTF8, true);
-                return reader.ReadToEnd();
+                using var stream = File.OpenRead(normalizedPath);
+                return ReadUtf8Text(stream);
             }
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
             {
                 sourceState = DecodedBundleViewerWindow.SourceSnapshotState.Missing;
                 return string.Empty;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or PathTooLongException or NotSupportedException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or PathTooLongException or NotSupportedException or DecoderFallbackException)
             {
                 sourceState = DecodedBundleViewerWindow.SourceSnapshotState.SourceReadError;
                 return $"Source file could not be read.\n{ex.Message}";
@@ -1532,6 +1681,8 @@ namespace ZCodeBundler
             var extension = Path.GetExtension(fullPath);
             return string.IsNullOrWhiteSpace(extension) ? "(no extension)" : extension.ToLowerInvariant();
         }
+
+        private sealed record SourceSnapshot(DecodedBundleViewerWindow.SourceSnapshotState State, string Content);
 
         private static int CountFiles(FileTreeNode node)
         {

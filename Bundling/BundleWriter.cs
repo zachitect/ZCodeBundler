@@ -10,6 +10,7 @@ public sealed class BundleWriter
     private const string FileEndDelimiter = "--- ZCODEBUNDLE_" + "FILE_END ---";
 
     private static readonly Encoding OutputEncoding = new UTF8Encoding(false);
+    private static readonly Encoding InputEncoding = new UTF8Encoding(false, true);
 
     public BundleWriteResult Write(string rootFolderPath, IReadOnlyList<FileTreeNode> selectedFiles, string outputPath)
     {
@@ -56,9 +57,9 @@ public sealed class BundleWriter
                 WriteFileBlock(writer, file);
                 writtenFileCount++;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
             {
-                warnings.Add($"Could not read file: {file.RelativePath}");
+                warnings.Add($"Could not read file as UTF-8 text: {file.RelativePath}");
             }
         }
 
@@ -103,8 +104,10 @@ public sealed class BundleWriter
 
     private static void WriteFileBlock(StreamWriter writer, FileTreeNode file)
     {
-        using var reader = new StreamReader(file.FullPath, Encoding.UTF8, true);
-        var content = reader.ReadToEnd();
+        var content = InputEncoding.GetString(File.ReadAllBytes(file.FullPath));
+
+        if (content.StartsWith('\uFEFF'))
+            content = content[1..];
 
         var modifiedText = file.DateModified.HasValue
             ? file.DateModified.Value.ToString("yyyy-MM-dd HH:mm:ss")
