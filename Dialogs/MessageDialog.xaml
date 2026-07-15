@@ -1,0 +1,40 @@
+<Window x:Class="ZCodeBundler.Dialogs.MessageDialog"
+        x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Background="White"
+        MaxHeight="1000"
+        Height="150"
+        Width="400"
+        Title="Selection"
+        MinHeight="150"
+        MinWidth="400"
+        Topmost="True"
+        WindowStyle="ToolWindow"
+        ShowInTaskbar="True"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="40"/>
+        </Grid.RowDefinitions>
+        <Grid Grid.Row="0" Margin="10,5,5,5">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="1" Name="TextIcon" FontSize="40" VerticalAlignment="Top" FontFamily="Century Gothic" FontWeight="ExtraBold" TextAlignment="Right"/>
+            <TextBox Grid.Column="0" Padding="5,10,10,10" TextWrapping="Wrap" Name="TextInstruction" HorizontalAlignment="Left" FontSize="12" IsReadOnly="True" Focusable="True" BorderThickness="0" Background="Transparent"/>
+        </Grid>
+        <Border Grid.Row="1">
+            <Grid Margin="5">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.5*"/>
+                    <ColumnDefinition Width="60"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Name="ButtonOptionA" Margin="5,0,0,0" Click="ButtonOptionA_Click"/>
+                <Button Grid.Column="1" Name="ButtonCancel" Content="Cancel" Margin="5,0,5,0" Click="ButtonCancel_Click"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

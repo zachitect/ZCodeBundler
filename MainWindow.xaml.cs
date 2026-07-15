@@ -1,5 +1,4 @@
-﻿using DataGridPreview.Core.APIReferences;
-using Microsoft.Win32;
+﻿using Microsoft.Win32;
 using System.IO;
 using System.Security;
 using System.Text;
@@ -8,7 +7,8 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using ZCodeBundler.Bundling;
 using ZCodeBundler.Decoding;
-using static DataGridPreview.Core.APIReferences.APIOfDialogs;
+using ZCodeBundler.Dialogs;
+using ZCodeBundler.Dialogs.TreeSelection;
 
 namespace ZCodeBundler
 {
@@ -86,11 +86,12 @@ Rules:
         {
             if (_openDecodedViewers.Count > 0)
             {
-                var confirmed = new APIOfDialogs.DialogMsgBoxAC(
+                var confirmed = new MessageDialog(
                     "Close ZCodeBundler",
                     "Closing ZCodeBundler will close all decoded viewer windows. Continue?",
                     "Yes",
-                    MessageBoxImage.Warning).ShowDialog();
+                    MessageBoxImage.Warning)
+                { Owner = this }.ShowDialog();
 
                 if (confirmed != true)
                 {
@@ -154,21 +155,23 @@ Rules:
                 if (result.Warnings.Count > 0)
                     message += $"\n\nWarnings: {result.Warnings.Count}\n{string.Join("\n", result.Warnings)}";
 
-                new APIOfDialogs.DialogMsgBoxAC(
+                new MessageDialog(
                     $"Bundle created",
                     message,
                     "OK",
-                    result.Warnings.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning).ShowDialog();
+                    result.Warnings.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning)
+                { Owner = this }.ShowDialog();
 
                 ShowTemporaryStatus($"Bundle created. Files written: {result.WrittenFileCount}.");
             }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)
             {
-                new APIOfDialogs.DialogMsgBoxAC(
+                new MessageDialog(
                     $"Could not create bundle",
                     ex.Message,
                     "OK",
-                    MessageBoxImage.Error).ShowDialog();
+                    MessageBoxImage.Error)
+                { Owner = this }.ShowDialog();
 
                 ShowTemporaryStatus("Could not create bundle.");
             }
@@ -432,11 +435,12 @@ Rules:
             }
 
             var confirmationMessage = BuildApplyConfirmationMessage(decodedFiles, differentFiles, missingFiles);
-            var confirmed = new APIOfDialogs.DialogMsgBoxAC(
+            var confirmed = new MessageDialog(
                 confirmationTitle,
                 confirmationMessage,
                 "Yes",
-                MessageBoxImage.Warning).ShowDialog();
+                MessageBoxImage.Warning)
+            { Owner = this }.ShowDialog();
 
             if (confirmed != true)
             {
@@ -606,20 +610,22 @@ Rules:
 
         private void ShowInformationMessage(string title, string message)
         {
-            new APIOfDialogs.DialogMsgBoxAC(
+            new MessageDialog(
                 title,
                 message,
                 "OK",
-                MessageBoxImage.Information).ShowDialog();
+                MessageBoxImage.Information)
+            { Owner = this }.ShowDialog();
         }
 
         private void ShowErrorMessage(string title, string message)
         {
-            new APIOfDialogs.DialogMsgBoxAC(
+            new MessageDialog(
                 title,
                 message,
                 "OK",
-                MessageBoxImage.Error).ShowDialog();
+                MessageBoxImage.Error)
+            { Owner = this }.ShowDialog();
         }
 
         private void SetDecodedPanelExpanded(bool isExpanded)
@@ -776,11 +782,12 @@ Rules:
 
             if (folderPaths.Count == 0 && filePaths.Count == 0)
             {
-                new APIOfDialogs.DialogMsgBoxAC(
+                new MessageDialog(
                     "Invalid drop",
                     "Drop folders or files.",
                     "OK",
-                    MessageBoxImage.Information).ShowDialog();
+                    MessageBoxImage.Information)
+                { Owner = this }.ShowDialog();
                 ShowTemporaryStatus("Invalid drop.");
             }
         }
@@ -817,11 +824,12 @@ Rules:
                 or PathTooLongException
                 or NotSupportedException)
             {
-                new APIOfDialogs.DialogMsgBoxAC(
+                new MessageDialog(
                     "Could not decode bundle",
                     ex.Message,
                     "OK",
-                    MessageBoxImage.Error).ShowDialog();
+                    MessageBoxImage.Error)
+                { Owner = this }.ShowDialog();
 
                 ShowTemporaryStatus("Could not decode bundle.");
                 return true;
@@ -1031,11 +1039,12 @@ Rules:
                 return;
 
             var confirmationMessage = GetViewerApplyConfirmationMessage(viewer, currentSourceState, currentSourceContent);
-            var confirmed = new APIOfDialogs.DialogMsgBoxAC(
+            var confirmed = new MessageDialog(
                 "Apply decoded changes",
                 confirmationMessage,
                 "Yes",
-                MessageBoxImage.Warning).ShowDialog();
+                MessageBoxImage.Warning)
+            { Owner = this }.ShowDialog();
 
             if (confirmed != true)
             {
@@ -1203,11 +1212,12 @@ Rules:
 
                 if (fileCount == 0)
                 {
-                    new APIOfDialogs.DialogMsgBoxAC(
+                    new MessageDialog(
                         "No files found",
                         "No eligible files were found in the selected folder.",
                         "OK",
-                        MessageBoxImage.Information).ShowDialog();
+                        MessageBoxImage.Information)
+                    { Owner = this }.ShowDialog();
                     ShowTemporaryStatus("No eligible files found.");
                     return;
                 }
@@ -1225,11 +1235,12 @@ Rules:
             }
             catch (Exception ex) when (ex is ArgumentException or DirectoryNotFoundException or IOException or UnauthorizedAccessException)
             {
-                new APIOfDialogs.DialogMsgBoxAC(
+                new MessageDialog(
                     "Could not scan folder",
                     ex.Message,
                     "OK",
-                    MessageBoxImage.Error).ShowDialog();
+                    MessageBoxImage.Error)
+                { Owner = this }.ShowDialog();
                 ShowTemporaryStatus("Could not scan folder.");
             }
         }
@@ -1250,11 +1261,12 @@ Rules:
                 }
                 catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or IOException or UnauthorizedAccessException)
                 {
-                    new APIOfDialogs.DialogMsgBoxAC(
+                    new MessageDialog(
                         "Could not add file",
                         ex.Message,
                         "OK",
-                        MessageBoxImage.Error).ShowDialog();
+                        MessageBoxImage.Error)
+                    { Owner = this }.ShowDialog();
                 }
             }
 
@@ -1274,7 +1286,7 @@ Rules:
             var nestedLists = BuildNestedLists(rootNode);
             var displayNames = BuildDisplayNames(rootNode);
 
-            var dialog = new DialogTreeSelection("Select Files", "Choose the files and folders to add to the bundle.", nestedLists, displayNames);
+            var dialog = new TreeSelectionWindow("Select Files", "Choose the files and folders to add to the bundle.", nestedLists, displayNames) { Owner = this };
 
             if (dialog.ShowDialog() != true)
             {
@@ -1287,11 +1299,12 @@ Rules:
 
             if (selectedFiles.Count == 0)
             {
-                new APIOfDialogs.DialogMsgBoxAC(
+                new MessageDialog(
                     "No files selected",
                     "No files were selected.",
                     "OK",
-                    MessageBoxImage.Information).ShowDialog();
+                    MessageBoxImage.Information)
+                { Owner = this }.ShowDialog();
                 ShowTemporaryStatus("No files selected.");
                 return;
             }
@@ -1380,7 +1393,7 @@ Rules:
             if (unknownExtensions.Count == 0)
                 return rootNode;
 
-            var dialog = new DialogMultiSelection("Unknown File Types", "Select the unknown file extensions you want to include.", unknownExtensions);
+            var dialog = new MultiSelectionWindow("Unknown File Types", "Select the unknown file extensions you want to include.", unknownExtensions) { Owner = this };
             var includedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             if (dialog.ShowDialog() == true)
@@ -1422,7 +1435,7 @@ Rules:
             var orderedExtensions = new List<string>(unknownExtensions);
             orderedExtensions.Sort(StringComparer.OrdinalIgnoreCase);
 
-            var dialog = new DialogMultiSelection("Unknown File Types", "Select the unknown file extensions you want to include.", orderedExtensions);
+            var dialog = new MultiSelectionWindow("Unknown File Types", "Select the unknown file extensions you want to include.", orderedExtensions) { Owner = this };
             var includedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             if (dialog.ShowDialog() == true)

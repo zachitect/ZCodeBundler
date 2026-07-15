@@ -337,7 +337,7 @@
                             <TextBlock Text="Enable Unknown File Types" VerticalAlignment="Center" Foreground="{StaticResource ColorTextMuted}" Margin="0,0,6,0" />
                             <ToggleButton x:Name="AskAboutUnknownFileTypesCheckBox" Style="{StaticResource SwitchToggleButtonStyle}" IsChecked="False" />
                         </StackPanel>
-                        <Button Grid.Column="2" Content="View Prompt" Style="{StaticResource CompactActionButtonStyle}" Click="ViewPromptButton_Click" />
+                        <Button Grid.Column="2" Content="Default LLM Output Prompt" Style="{StaticResource CompactActionButtonStyle}" Click="ViewPromptButton_Click" />
                         <StackPanel Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <TextBlock Text="Enable Tree Selection" VerticalAlignment="Center" Foreground="{StaticResource ColorTextMuted}" Margin="0,0,6,0" />
                             <ToggleButton x:Name="UseTreeSelectionCheckBox" Style="{StaticResource SwitchToggleButtonStyle}" IsChecked="False" />
