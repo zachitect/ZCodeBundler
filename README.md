@@ -1,7 +1,7 @@
 <img width="1586" height="793" alt="image" src="https://github.com/user-attachments/assets/cab6053f-a8ea-40b3-92b5-a3b5d049ad9d" />
 <img width="1586" height="793" alt="image" src="https://github.com/user-attachments/assets/579566fd-41bf-4705-8705-3cfe6c18f296" />
 
-# ZCodeBundler
+# ZCodeBundler (Coding with AI Chat)
 
 **Want to use AI chat for coding across an entire project, not just individual code snippets?**
 
