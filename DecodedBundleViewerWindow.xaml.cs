@@ -18,7 +18,7 @@ namespace ZCodeBundler
             SourceReadError
         }
 
-        private const int MaxAlignedDiffLineCount = 1000;
+        private const int MaxDiffEditCount = 1000;
         private static readonly Brush NormalBackground = Brushes.Transparent;
         private static readonly Brush RemovedBackground = new SolidColorBrush(Color.FromRgb(255, 230, 230));
         private static readonly Brush AddedBackground = new SolidColorBrush(Color.FromRgb(232, 248, 237));
@@ -131,10 +131,10 @@ namespace ZCodeBundler
             if (HasOnlyLineEndingDifferences(sourceContent, decodedContent))
                 return BuildLineEndingOnlyDifferenceRows(sourceContent, decodedContent, sourceLines, decodedLines);
 
-            if (sourceLines.Count + decodedLines.Count > MaxAlignedDiffLineCount)
-                return BuildLargeDiffPreviewRows(sourceLines.Count, decodedLines.Count);
-
             var operations = BuildDiffOperations(sourceLines, decodedLines);
+
+            if (operations == null)
+                return BuildLargeDiffPreviewRows(sourceLines.Count, decodedLines.Count);
             var rows = new List<DiffRow>();
             var sourceLineNumber = 1;
             var decodedLineNumber = 1;
@@ -234,11 +234,11 @@ namespace ZCodeBundler
             };
         }
 
-        private static List<DiffOperation> BuildDiffOperations(List<string> sourceLines, List<string> decodedLines)
+        private static List<DiffOperation>? BuildDiffOperations(List<string> sourceLines, List<string> decodedLines)
         {
             var sourceCount = sourceLines.Count;
             var decodedCount = decodedLines.Count;
-            var maxEditCount = sourceCount + decodedCount;
+            var maxEditCount = Math.Min(sourceCount + decodedCount, MaxDiffEditCount);
             var offset = maxEditCount + 1;
             var vector = new int[(maxEditCount * 2) + 3];
             var trace = new List<int[]>();
@@ -276,7 +276,7 @@ namespace ZCodeBundler
                 }
             }
 
-            return new List<DiffOperation>();
+            return null;
         }
 
         private static List<DiffOperation> BacktrackDiffOperations(
