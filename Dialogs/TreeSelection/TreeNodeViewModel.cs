@@ -9,7 +9,7 @@ internal sealed class TreeNodeViewModel : INotifyPropertyChanged
     private bool? _isSelected;
     private bool _isExpanded;
 
-    internal bool? IsSelected
+    public bool? IsSelected
     {
         get => _isSelected;
         set
@@ -21,7 +21,7 @@ internal sealed class TreeNodeViewModel : INotifyPropertyChanged
         }
     }
 
-    internal bool IsExpanded
+    public bool IsExpanded
     {
         get => _isExpanded;
         set
@@ -34,9 +34,9 @@ internal sealed class TreeNodeViewModel : INotifyPropertyChanged
         }
     }
 
-    internal ObservableCollection<TreeNodeViewModel> Children { get; init; } = new();
+    public ObservableCollection<TreeNodeViewModel> Children { get; init; } = new();
     internal TreeNodeViewModel? Parent { get; set; }
-    internal string DisplayName { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

@@ -4,7 +4,7 @@ namespace ZCodeBundler.Dialogs.TreeSelection;
 
 internal sealed class TreeSelectionViewModel
 {
-    internal ObservableCollection<TreeNodeViewModel> RootNodes { get; } = new();
+    public ObservableCollection<TreeNodeViewModel> RootNodes { get; } = new();
 
     internal void LoadFromNestedLists(IEnumerable<object> nestedItems, IEnumerable<object>? displayNames)
     {
